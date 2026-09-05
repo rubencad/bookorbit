@@ -13,7 +13,7 @@ import { extractCbrPage, listCbrPages } from './lib/cbr-pages';
 import { listCbzPages, streamCbzPage } from './lib/cbz-pages';
 import type { CleanupFailureReporter } from './lib/cleanup-failure';
 import { ComicArchiveError } from './lib/comic-archive-error';
-import { uniformComicPageMediaType, type ComicPageEntry } from './lib/comic-page-entry';
+import { sharedComicPageMediaType, type ComicPageEntry } from './lib/comic-page-entry';
 
 export interface ComicFileRef {
   id: number;
@@ -26,7 +26,7 @@ export interface ComicFileRef {
 export interface ComicPageManifest {
   format: ComicContainerFormat;
   pages: ComicPageEntry[];
-  pageMediaType: string | null;
+  pageMediaType: string;
 }
 
 export type ComicPageImageFormat = 'jpeg' | 'png';
@@ -253,7 +253,7 @@ export class ComicPageService {
       this.logger.debug(
         `[comic.page_manifest] [end] fileId=${file.id} format=${actualFormat} pages=${pages.length} durationMs=${Date.now() - startedAt} - comic page manifest built`,
       );
-      return { format: actualFormat, pages, pageMediaType: uniformComicPageMediaType(pages) };
+      return { format: actualFormat, pages, pageMediaType: sharedComicPageMediaType(pages) };
     } catch (error) {
       this.logger.warn(
         `[comic.page_manifest] [fail] fileId=${file.id} format=${format} durationMs=${Date.now() - startedAt} errorClass=${errorClass(error)} error="${errorMessage(error)}" - comic page manifest failed`,

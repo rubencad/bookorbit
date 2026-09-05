@@ -34,7 +34,7 @@ describe('ComicPageRepository', () => {
     expect(query.params).toEqual([9, null, null]);
   });
 
-  it('selects uncounted comic files from present books in the folder', async () => {
+  it('selects comic files missing a count or a media type from present books in the folder', async () => {
     const rows = [{ id: 3, absolutePath: '/books/a.cbz', format: 'cbz', pageCount: null, pageMediaType: null }];
     const limit = vi.fn().mockResolvedValue(rows);
     const orderBy = vi.fn().mockReturnValue({ limit });
@@ -50,7 +50,7 @@ describe('ComicPageRepository', () => {
     expect(query.sql).toContain('"book_files"."library_folder_id" = $1');
     expect(query.sql).toContain('"book_files"."role" = $2');
     expect(query.sql).toContain('"book_files"."format" in ($3, $4, $5)');
-    expect(query.sql).toContain('"book_files"."page_count" is null');
+    expect(query.sql).toContain('("book_files"."page_count" is null or "book_files"."page_media_type" is null)');
     expect(query.sql).toContain('"books"."status" = $6');
     expect(query.params).toEqual([7, 'content', 'cbz', 'cbr', 'cb7', 'present']);
     expect(limit).toHaveBeenCalledWith(500);

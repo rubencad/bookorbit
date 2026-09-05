@@ -371,6 +371,18 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
       expect(row.pageCount).toBe(2);
     });
 
+    it('fills in the page media type of an already counted comic on the next scan', async () => {
+      await ctx.db.update(schema.bookFiles).set({ pageMediaType: null }).where(eq(schema.bookFiles.id, sharedCb7.bookFileId));
+
+      await triggerAndWaitForLibraryScan(ctx, sharedLibrary.libraryId);
+
+      const [row] = await ctx.db
+        .select({ pageCount: schema.bookFiles.pageCount, pageMediaType: schema.bookFiles.pageMediaType })
+        .from(schema.bookFiles)
+        .where(eq(schema.bookFiles.id, sharedCb7.bookFileId));
+      expect(row).toEqual({ pageCount: 2, pageMediaType: 'image/*' });
+    });
+
     it('returns page counts, streams ordered pages, and rejects invalid page requests and unsupported formats', async () => {
       const pagesResponse = await ctx.app.inject({
         method: 'GET',

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { COMIC_CONTAINER_FORMATS } from '../../common/comic-format-detect';
@@ -28,7 +28,7 @@ export class ComicPageRepository {
           eq(schema.bookFiles.libraryFolderId, libraryFolderId),
           eq(schema.bookFiles.role, 'content'),
           inArray(schema.bookFiles.format, [...COMIC_CONTAINER_FORMATS]),
-          isNull(schema.bookFiles.pageCount),
+          or(isNull(schema.bookFiles.pageCount), isNull(schema.bookFiles.pageMediaType)),
           eq(schema.books.status, 'present'),
         ),
       )

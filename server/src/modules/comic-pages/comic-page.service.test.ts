@@ -71,7 +71,7 @@ describe('ComicPageService', () => {
       const manifest = await service.getManifest(fileRef(path, format));
 
       expect(manifest.format).toBe(format);
-      expect(manifest.pageMediaType).toBeNull();
+      expect(manifest.pageMediaType).toBe('image/*');
       expect(manifest.pages.map((page) => [page.index, page.entryName, page.mimeType, page.sizeBytes])).toEqual([
         [0, 'pages/002-cover.png', 'image/png', COMIC_PAGE_PNG.length],
         [1, 'pages/010-spread.jpg', 'image/jpeg', COMIC_PAGE_JPEG.length],
@@ -127,7 +127,7 @@ describe('ComicPageService', () => {
     await expect(service.streamPage(file, 0)).resolves.toBeDefined();
 
     expect(repository.updatePageCount).toHaveBeenCalledTimes(1);
-    expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, null);
+    expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, 'image/*');
   });
 
   it('shares one manifest build between concurrent requests', async () => {
@@ -142,9 +142,18 @@ describe('ComicPageService', () => {
   it('skips the write when the row already carries the count and media type', async () => {
     const path = await createCbzComicFixture(root, 'cache/known.cbz', TWO_PAGE_ENTRIES);
 
-    await expect(service.getPageCount(fileRef(path, 'cbz', 2))).resolves.toBe(2);
+    await expect(service.getPageCount({ ...fileRef(path, 'cbz', 2), pageMediaType: 'image/*' })).resolves.toBe(2);
 
     expect(repository.updatePageCount).not.toHaveBeenCalled();
+  });
+
+  it('fills in the media type for a row counted before it was recorded', async () => {
+    const path = await createCbzComicFixture(root, 'cache/legacy-count.cbz', TWO_PAGE_ENTRIES);
+    const file = fileRef(path, 'cbz', 2);
+
+    await expect(service.getPageCount(file)).resolves.toBe(2);
+
+    expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, 'image/*');
   });
 
   it('rewrites the row when only the stored media type is stale', async () => {
@@ -153,7 +162,7 @@ describe('ComicPageService', () => {
 
     await expect(service.getPageCount(file)).resolves.toBe(2);
 
-    expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, null);
+    expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, 'image/*');
   });
 
   it('rebuilds the manifest when the file changes on disk', async () => {
@@ -167,7 +176,7 @@ describe('ComicPageService', () => {
     await utimes(path, later, later);
 
     await expect(service.getPageCount(file)).resolves.toBe(3);
-    expect(repository.updatePageCount).toHaveBeenLastCalledWith(file.id, 3, null);
+    expect(repository.updatePageCount).toHaveBeenLastCalledWith(file.id, 3, 'image/*');
   });
 
   it('still serves pages when the count cannot be persisted', async () => {
@@ -183,7 +192,7 @@ describe('ComicPageService', () => {
 
     await expect(service.refreshPageCount(file)).resolves.toBe(2);
 
-    expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, null);
+    expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, 'image/*');
   });
 
   it('clears the stored count when a refresh finds the archive unreadable', async () => {
@@ -287,7 +296,7 @@ describe('ComicPageService', () => {
       await expect(service.backfillPageCounts(7, 10)).resolves.toEqual({ attempted: 2, counted: 1, failed: 1, moreRemaining: false });
 
       expect(repository.findUncountedFiles).toHaveBeenCalledWith(7, 11);
-      expect(repository.updatePageCount).toHaveBeenCalledWith(readable.id, 2, null);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(readable.id, 2, 'image/*');
       expect(repository.updatePageCount).toHaveBeenCalledWith(broken.id, null, null);
     });
 
@@ -319,7 +328,7 @@ describe('ComicPageService', () => {
       const file = fileRef(await createCbzComicFixture(root, 'queue/one.cbz', TWO_PAGE_ENTRIES), 'cbz');
 
       expect(service.queuePageCount(file)).toBe(true);
-      await vi.waitFor(() => expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, null));
+      await vi.waitFor(() => expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2, 'image/*'));
     });
 
     it('ignores a file that is already queued and keeps counting the rest', async () => {
@@ -332,8 +341,8 @@ describe('ComicPageService', () => {
       await drained();
 
       expect(repository.updatePageCount).toHaveBeenCalledTimes(2);
-      expect(repository.updatePageCount).toHaveBeenCalledWith(first.id, 2, null);
-      expect(repository.updatePageCount).toHaveBeenCalledWith(second.id, 2, null);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(first.id, 2, 'image/*');
+      expect(repository.updatePageCount).toHaveBeenCalledWith(second.id, 2, 'image/*');
     });
 
     it('records the failure of an unreadable file and continues with the next one', async () => {
@@ -347,7 +356,7 @@ describe('ComicPageService', () => {
       await drained();
 
       expect(repository.updatePageCount).toHaveBeenCalledWith(broken.id, null, null);
-      expect(repository.updatePageCount).toHaveBeenCalledWith(readable.id, 2, null);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(readable.id, 2, 'image/*');
     });
 
     it('accepts a file again once its earlier count has finished', async () => {

@@ -37,8 +37,10 @@ export function toComicPageEntries(candidates: readonly ComicPageCandidate[]): C
     .map((candidate, index) => ({ ...candidate, index, mimeType: imageContentTypeFromPath(candidate.entryName) }));
 }
 
-export function uniformComicPageMediaType(pages: readonly ComicPageEntry[]): string | null {
+export const MIXED_COMIC_PAGE_MEDIA_TYPE = 'image/*';
+
+export function sharedComicPageMediaType(pages: readonly ComicPageEntry[]): string {
   const first = pages[0]?.mimeType;
-  if (first === undefined) return null;
-  return pages.every((page) => page.mimeType === first) ? first : null;
+  if (first !== undefined && pages.every((page) => page.mimeType === first)) return first;
+  return MIXED_COMIC_PAGE_MEDIA_TYPE;
 }
