@@ -17,6 +17,7 @@ export * from './scanner';
 export * from './reader';
 export * from './oidc';
 export * from './opds';
+export * from './komga';
 export * from './kobo';
 export * from './book-dock';
 export * from './book-requests';
