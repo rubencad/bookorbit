@@ -2,6 +2,7 @@ import type { Component } from 'vue'
 import {
   Activity,
   Bell,
+  BookImage,
   BookMarked,
   BookOpen,
   Database,
@@ -372,6 +373,15 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Rss,
         keywords: 'opds feed catalog third party reader',
         isVisible: anyPermission('opds_access'),
+      },
+      {
+        id: 'komga',
+        routeName: 'settings-komga',
+        labelKey: 'settings.common.nav.komga',
+        descriptionKey: 'settings.nav.descriptions.komga',
+        icon: BookImage,
+        keywords: 'komga mihon tachiyomi komelia suwayomi manga comics',
+        isVisible: anyPermission('komga_access'),
       },
       {
         id: 'email',

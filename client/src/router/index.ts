@@ -369,6 +369,12 @@ export const routes: RouteRecordRaw[] = [
             meta: { title: () => t('titles.opds') },
           },
           {
+            path: 'komga',
+            name: 'settings-komga',
+            component: () => import('@/features/settings/KomgaSettings.vue'),
+            meta: { title: () => t('titles.komga') },
+          },
+          {
             path: 'email',
             name: 'settings-email',
             component: () => import('@/features/email/components/EmailSettings.vue'),

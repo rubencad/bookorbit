@@ -58,6 +58,7 @@ describe('SettingsView shell', () => {
     ['settings-kobo', 'Sync endpoint, store proxy, and shelf mapping.'],
     ['settings-koreader', 'Progress sync and document matching.'],
     ['settings-opds', 'Catalog feeds for third-party reading apps.'],
+    ['settings-komga', 'Komga-compatible API for Mihon and other comic apps.'],
     ['settings-email', 'SMTP delivery and send-to-device addresses.'],
   ])('renders the shared shell header for %s', (routeName, description) => {
     const wrapper = mountView(routeName)

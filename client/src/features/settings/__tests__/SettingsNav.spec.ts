@@ -170,6 +170,11 @@ describe('SettingsNav', () => {
       expect(itemLabels(mountNav({ perms: ['opds_access'] }))).toContain('OPDS')
     })
 
+    it('shows Komga only with komga_access', () => {
+      expect(itemLabels(mountNav())).not.toContain('Komga')
+      expect(itemLabels(mountNav({ perms: ['komga_access'] }))).toContain('Komga')
+    })
+
     it('shows Email with email_send', () => {
       expect(itemLabels(mountNav({ perms: ['email_send'] }))).toContain('Email')
     })
