@@ -36,3 +36,9 @@ export function toComicPageEntries(candidates: readonly ComicPageCandidate[]): C
     .sort((a, b) => compareComicEntryNames(a.entryName, b.entryName))
     .map((candidate, index) => ({ ...candidate, index, mimeType: imageContentTypeFromPath(candidate.entryName) }));
 }
+
+export function uniformComicPageMediaType(pages: readonly ComicPageEntry[]): string | null {
+  const first = pages[0]?.mimeType;
+  if (first === undefined) return null;
+  return pages.every((page) => page.mimeType === first) ? first : null;
+}

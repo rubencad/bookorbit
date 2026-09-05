@@ -88,6 +88,8 @@ export const bookFiles = pgTable(
     isFixedLayout: boolean('is_fixed_layout'),
     // null means "not counted yet"; comic files are counted by the scanner and lazily on first page request.
     pageCount: integer('page_count'),
+    // Media type every page of a counted comic shares; null when the pages are mixed or uncounted.
+    pageMediaType: varchar('page_media_type', { length: 64 }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .defaultNow()

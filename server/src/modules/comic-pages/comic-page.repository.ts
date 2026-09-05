@@ -19,6 +19,7 @@ export class ComicPageRepository {
         absolutePath: schema.bookFiles.absolutePath,
         format: schema.bookFiles.format,
         pageCount: schema.bookFiles.pageCount,
+        pageMediaType: schema.bookFiles.pageMediaType,
       })
       .from(schema.bookFiles)
       .innerJoin(schema.books, eq(schema.books.id, schema.bookFiles.bookId))
@@ -35,11 +36,16 @@ export class ComicPageRepository {
       .limit(limit);
   }
 
-  async updatePageCount(fileId: number, pageCount: number | null): Promise<void> {
-    // Avoid changing updatedAt when the count is unchanged; KOReader and OPDS use that timestamp.
+  async updatePageCount(fileId: number, pageCount: number | null, pageMediaType: string | null): Promise<void> {
+    // Avoid changing updatedAt when nothing changed; KOReader and OPDS use that timestamp.
     await this.db
       .update(schema.bookFiles)
-      .set({ pageCount })
-      .where(and(eq(schema.bookFiles.id, fileId), sql`${schema.bookFiles.pageCount} is distinct from ${pageCount}`));
+      .set({ pageCount, pageMediaType })
+      .where(
+        and(
+          eq(schema.bookFiles.id, fileId),
+          sql`(${schema.bookFiles.pageCount} is distinct from ${pageCount} or ${schema.bookFiles.pageMediaType} is distinct from ${pageMediaType})`,
+        ),
+      );
   }
 }

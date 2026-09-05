@@ -610,6 +610,13 @@
       "when": 1788600418049,
       "tag": "0086_add_book_files_page_count",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1788615399467,
+      "tag": "0087_add_book_files_page_media_type",
+      "breakpoints": true
     }
   ]
 }

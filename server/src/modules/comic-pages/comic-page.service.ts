@@ -13,18 +13,20 @@ import { extractCbrPage, listCbrPages } from './lib/cbr-pages';
 import { listCbzPages, streamCbzPage } from './lib/cbz-pages';
 import type { CleanupFailureReporter } from './lib/cleanup-failure';
 import { ComicArchiveError } from './lib/comic-archive-error';
-import type { ComicPageEntry } from './lib/comic-page-entry';
+import { uniformComicPageMediaType, type ComicPageEntry } from './lib/comic-page-entry';
 
 export interface ComicFileRef {
   id: number;
   absolutePath: string;
   format: string | null;
   pageCount?: number | null;
+  pageMediaType?: string | null;
 }
 
 export interface ComicPageManifest {
   format: ComicContainerFormat;
   pages: ComicPageEntry[];
+  pageMediaType: string | null;
 }
 
 export type ComicPageImageFormat = 'jpeg' | 'png';
@@ -115,7 +117,9 @@ export class ComicPageService {
 
     return this.manifests.get(MANIFEST_CACHE_SCOPE, cacheKey, async () => {
       const manifest = await this.buildManifest(file, format);
-      if (file.pageCount !== manifest.pages.length) await this.persistPageCount(file.id, manifest.pages.length);
+      if (file.pageCount !== manifest.pages.length || file.pageMediaType !== manifest.pageMediaType) {
+        await this.persistPageCount(file.id, manifest.pages.length, manifest.pageMediaType);
+      }
       return manifest;
     });
   }
@@ -128,10 +132,10 @@ export class ComicPageService {
       manifest = await this.buildManifest(file, format);
     } catch (error) {
       // Drop the count from the previous file version.
-      await this.persistPageCount(file.id, null);
+      await this.persistPageCount(file.id, null, null);
       throw error;
     }
-    await this.repository.updatePageCount(file.id, manifest.pages.length);
+    await this.repository.updatePageCount(file.id, manifest.pages.length, manifest.pageMediaType);
     return manifest.pages.length;
   }
 
@@ -249,7 +253,7 @@ export class ComicPageService {
       this.logger.debug(
         `[comic.page_manifest] [end] fileId=${file.id} format=${actualFormat} pages=${pages.length} durationMs=${Date.now() - startedAt} - comic page manifest built`,
       );
-      return { format: actualFormat, pages };
+      return { format: actualFormat, pages, pageMediaType: uniformComicPageMediaType(pages) };
     } catch (error) {
       this.logger.warn(
         `[comic.page_manifest] [fail] fileId=${file.id} format=${format} durationMs=${Date.now() - startedAt} errorClass=${errorClass(error)} error="${errorMessage(error)}" - comic page manifest failed`,
@@ -258,9 +262,9 @@ export class ComicPageService {
     }
   }
 
-  private async persistPageCount(fileId: number, pageCount: number | null): Promise<void> {
+  private async persistPageCount(fileId: number, pageCount: number | null, pageMediaType: string | null): Promise<void> {
     try {
-      await this.repository.updatePageCount(fileId, pageCount);
+      await this.repository.updatePageCount(fileId, pageCount, pageMediaType);
     } catch (error) {
       this.logger.warn(
         `[comic.page_count] [fail] fileId=${fileId} pageCount=${pageCount} errorClass=${errorClass(error)} error="${errorMessage(error)}" - could not persist comic page count`,

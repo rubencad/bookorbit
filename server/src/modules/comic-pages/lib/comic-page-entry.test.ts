@@ -1,4 +1,4 @@
-import { isComicPageEntryName, toComicPageEntries } from './comic-page-entry';
+import { isComicPageEntryName, toComicPageEntries, uniformComicPageMediaType } from './comic-page-entry';
 
 describe('isComicPageEntryName', () => {
   it('accepts image files anywhere in the tree', () => {
@@ -39,5 +39,24 @@ describe('toComicPageEntries', () => {
   it('keeps archive-specific entry data on the page', () => {
     const cbzEntry = { name: 'a.jpg', compression: 8, compressedSize: 5, uncompressedSize: 9, localHeaderOffset: 0, dataStart: 30 };
     expect(toComicPageEntries([{ entryName: 'a.jpg', sizeBytes: 9, cbzEntry }])[0].cbzEntry).toBe(cbzEntry);
+  });
+});
+
+describe('uniformComicPageMediaType', () => {
+  it('returns the shared type when every page has the same media type', () => {
+    const pages = toComicPageEntries([
+      { entryName: '002.JPG', sizeBytes: 1 },
+      { entryName: '001.jpeg', sizeBytes: 1 },
+    ]);
+    expect(uniformComicPageMediaType(pages)).toBe('image/jpeg');
+  });
+
+  it('returns null for mixed archives and for archives without pages', () => {
+    const mixed = toComicPageEntries([
+      { entryName: '001.png', sizeBytes: 1 },
+      { entryName: '002.jpg', sizeBytes: 1 },
+    ]);
+    expect(uniformComicPageMediaType(mixed)).toBeNull();
+    expect(uniformComicPageMediaType([])).toBeNull();
   });
 });
