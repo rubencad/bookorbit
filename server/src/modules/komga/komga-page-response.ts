@@ -56,6 +56,7 @@ export interface ResolvePageRequestOptions {
   defaultSort: KomgaSort[];
   sortableProperties: readonly string[];
   allowUnpaged?: boolean;
+  unpagedMaxRows?: number;
   defaultSize?: number;
 }
 
@@ -74,11 +75,12 @@ export function resolvePageRequest(query: KomgaPageQuery, options: ResolvePageRe
   const parsedSort = parseSortParams(query.sort, options.sortableProperties);
   const sort = parsedSort.length > 0 ? parsedSort : options.defaultSort;
 
+  const unpagedMaxRows = options.unpagedMaxRows ?? KOMGA_UNPAGED_MAX_ROWS;
   if (query.unpaged && options.allowUnpaged) {
-    return { page: 0, size: KOMGA_UNPAGED_MAX_ROWS, offset: 0, unpaged: true, sort };
+    return { page: 0, size: unpagedMaxRows, offset: 0, unpaged: true, sort };
   }
 
-  const maxSize = options.allowUnpaged ? KOMGA_UNPAGED_MAX_ROWS : KOMGA_MAX_PAGE_SIZE;
+  const maxSize = options.allowUnpaged ? unpagedMaxRows : KOMGA_MAX_PAGE_SIZE;
   const page = Math.max(query.page ?? 0, 0);
   const requestedSize = query.unpaged ? KOMGA_MAX_PAGE_SIZE : (query.size ?? options.defaultSize ?? 20);
   const size = Math.min(Math.max(requestedSize, 1), maxSize);

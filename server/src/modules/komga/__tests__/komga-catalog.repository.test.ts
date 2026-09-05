@@ -30,19 +30,19 @@ function makeRepository(executeResults: Array<{ rows: unknown[] }> = []) {
 }
 
 describe('KomgaCatalogRepository', () => {
-  it('returns nothing for a scope without libraries instead of querying', async () => {
+  it('skips database queries for an empty library scope', async () => {
     const { repository, db } = makeRepository();
     const empty = { ...SCOPE, libraryIds: [] };
     await expect(repository.listSeries(empty, {}, PAGE)).resolves.toEqual({ rows: [], total: 0 });
     await expect(repository.listBooks(empty, {}, PAGE)).resolves.toEqual({ bookIds: [], total: 0 });
     await expect(repository.listSeriesBooks(SCOPE, { kind: 'unknown', libraryId: 7 }, {}, PAGE)).resolves.toEqual({ bookIds: [], total: 0 });
     await expect(repository.findVisibleBookId(empty, 1)).resolves.toBeNull();
-    await expect(repository.listReferentialValues(empty, 'genre')).resolves.toEqual([]);
-    await expect(repository.listReferentialAuthors(empty)).resolves.toEqual([]);
+    await expect(repository.listReferentialValues(empty, 'genre', { limit: 10, offset: 0 })).resolves.toEqual({ values: [], total: 0 });
+    await expect(repository.listReferentialAuthors(empty, { limit: 10, offset: 0 })).resolves.toEqual({ authors: [], total: 0 });
     expect(db.execute).not.toHaveBeenCalled();
   });
 
-  it('refuses series keys outside the accessible libraries and contradictory status filters', async () => {
+  it('rejects inaccessible series keys and contradictory status filters', async () => {
     const { repository, db } = makeRepository();
     await expect(repository.findSeries(SCOPE, { kind: 'series', libraryId: 9, seriesId: 1 })).resolves.toBeNull();
     await expect(repository.listSeries(SCOPE, { statuses: ['ABANDONED'] }, PAGE)).resolves.toEqual({ rows: [], total: 0 });
@@ -98,7 +98,7 @@ describe('KomgaCatalogRepository', () => {
     expect(rows[0]).toMatchObject({ name: 'Saga', booksCount: 3, expectedBookCount: 3, createdAt: new Date('2026-01-01T00:00:00Z') });
   });
 
-  it('assembles series aggregates from the five grouped queries and leaves gaps empty', async () => {
+  it('maps aggregate query results and defaults missing values', async () => {
     const { repository, db } = makeRepository([
       { rows: [{ key: '2-s9', book_id: 10 }] },
       { rows: [{ key: '2-s9', description: 'Summary', series_index: '1' }] },
@@ -138,6 +138,30 @@ describe('KomgaCatalogRepository', () => {
       tags: [],
       authors: [],
     });
+  });
+
+  it('uses the full database count for referential values', async () => {
+    const { repository, db } = makeRepository([{ rows: [{ name: 'Drama' }, { name: 'Fantasy' }] }, { rows: [{ total: '2500' }] }]);
+    await expect(repository.listReferentialValues(SCOPE, 'genre', { search: 'a', limit: 2, offset: 4 })).resolves.toEqual({
+      values: ['Drama', 'Fantasy'],
+      total: 2500,
+    });
+    expect(db.execute).toHaveBeenCalledTimes(2);
+
+    const publishers = makeRepository([{ rows: [{ name: 'Image' }] }, { rows: [{ total: '1' }] }]);
+    await expect(publishers.repository.listReferentialValues(SCOPE, 'publisher', { limit: 20, offset: 0 })).resolves.toEqual({
+      values: ['Image'],
+      total: 1,
+    });
+  });
+
+  it('uses the full database count for author references', async () => {
+    const { repository, db } = makeRepository([{ rows: [{ name: 'Ann', role: 'writer' }] }, { rows: [{ total: '40' }] }]);
+    await expect(repository.listReferentialAuthors(SCOPE, { search: 'an', role: 'writer', limit: 1, offset: 0 })).resolves.toEqual({
+      authors: [{ name: 'Ann', role: 'writer' }],
+      total: 40,
+    });
+    expect(db.execute).toHaveBeenCalledTimes(2);
   });
 
   it('reads numbering statistics and ordinals per series key', async () => {

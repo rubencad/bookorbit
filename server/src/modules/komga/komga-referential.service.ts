@@ -7,16 +7,17 @@ import type { KomgaAuthorRef } from './komga-catalog.types';
 import { KomgaLibraryService } from './komga-library.service';
 import { buildKomgaPage, resolvePageRequest, type KomgaPage, type ResolvePageRequestOptions } from './komga-page-response';
 import type { ReferentialPageQuery, ReferentialQuery } from './komga-query';
-import { KOMGA_AUTHOR_ROLES } from './komga.constants';
+import { KOMGA_AUTHOR_ROLES, KOMGA_REFERENTIAL_MAX_ROWS } from './komga.constants';
 
 export type KomgaReferentialKind = 'genre' | 'tag' | 'publisher' | 'language';
 
-const REFERENTIAL_PAGE_OPTIONS: ResolvePageRequestOptions = { defaultSort: [], sortableProperties: [], allowUnpaged: true };
-
-function matchesSearch(value: string, search: string | undefined): boolean {
-  const term = search?.trim().toLowerCase();
-  return !term || value.toLowerCase().includes(term);
-}
+const REFERENTIAL_PAGE_OPTIONS: ResolvePageRequestOptions = {
+  defaultSort: [],
+  sortableProperties: [],
+  allowUnpaged: true,
+  unpagedMaxRows: KOMGA_REFERENTIAL_MAX_ROWS,
+};
+const V1_WINDOW = { limit: KOMGA_REFERENTIAL_MAX_ROWS, offset: 0 };
 
 @Injectable()
 export class KomgaReferentialService {
@@ -27,7 +28,8 @@ export class KomgaReferentialService {
 
   async listValues(user: RequestUser, account: KomgaRequestAccount, kind: KomgaReferentialKind, query: ReferentialQuery): Promise<string[]> {
     const scope = await this.libraryService.resolveScope(user, account, query.library_id);
-    return this.repository.listReferentialValues(scope, kind);
+    const { values } = await this.repository.listReferentialValues(scope, kind, { ...V1_WINDOW, search: query.search });
+    return values;
   }
 
   async listValuesPage(
@@ -37,20 +39,31 @@ export class KomgaReferentialService {
     query: ReferentialPageQuery,
   ): Promise<KomgaPage<string>> {
     const page = resolvePageRequest(query, REFERENTIAL_PAGE_OPTIONS);
-    const values = (await this.listValues(user, account, kind, query)).filter((value) => matchesSearch(value, query.search));
-    return buildKomgaPage(values.slice(page.offset, page.offset + page.size), page, values.length);
+    const scope = await this.libraryService.resolveScope(user, account, query.library_id);
+    const { values, total } = await this.repository.listReferentialValues(scope, kind, {
+      search: query.search,
+      limit: page.size,
+      offset: page.offset,
+    });
+    return buildKomgaPage(values, page, total);
   }
 
   async listAuthors(user: RequestUser, account: KomgaRequestAccount, query: ReferentialQuery): Promise<KomgaAuthorRef[]> {
     const scope = await this.libraryService.resolveScope(user, account, query.library_id);
-    return this.repository.listReferentialAuthors(scope, query.search);
+    const { authors } = await this.repository.listReferentialAuthors(scope, { ...V1_WINDOW, search: query.search });
+    return authors;
   }
 
   async listAuthorsPage(user: RequestUser, account: KomgaRequestAccount, query: ReferentialPageQuery): Promise<KomgaPage<KomgaAuthorRef>> {
     const page = resolvePageRequest(query, REFERENTIAL_PAGE_OPTIONS);
-    const role = query.role?.trim().toLowerCase();
-    const refs = (await this.listAuthors(user, account, query)).filter((ref) => !role || ref.role === role);
-    return buildKomgaPage(refs.slice(page.offset, page.offset + page.size), page, refs.length);
+    const scope = await this.libraryService.resolveScope(user, account, query.library_id);
+    const { authors, total } = await this.repository.listReferentialAuthors(scope, {
+      search: query.search,
+      role: query.role,
+      limit: page.size,
+      offset: page.offset,
+    });
+    return buildKomgaPage(authors, page, total);
   }
 
   async listAuthorNames(user: RequestUser, account: KomgaRequestAccount, query: ReferentialQuery): Promise<string[]> {

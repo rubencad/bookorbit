@@ -36,7 +36,7 @@ import type {
 } from './komga-catalog.types';
 import { formatSeriesId, type KomgaSeriesKey } from './komga-ids';
 import type { KomgaPageRequest } from './komga-page-response';
-import { KOMGA_REFERENTIAL_MAX_ROWS, KOMGA_SERIES_TERMS_MAX, KOMGA_UNKNOWN_SERIES_TITLE, type KomgaAuthorRole } from './komga.constants';
+import { KOMGA_SERIES_TERMS_MAX, KOMGA_UNKNOWN_SERIES_TITLE, type KomgaAuthorRole } from './komga.constants';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -56,6 +56,26 @@ export interface KomgaBookFilters {
   mediaStatuses?: string[];
   tags?: string[];
   authors?: string[];
+}
+
+export interface KomgaReferentialWindow {
+  search?: string;
+  limit: number;
+  offset: number;
+}
+
+export interface KomgaAuthorWindow extends KomgaReferentialWindow {
+  role?: string;
+}
+
+export interface KomgaReferentialValues {
+  values: string[];
+  total: number;
+}
+
+export interface KomgaReferentialAuthors {
+  authors: KomgaAuthorRef[];
+  total: number;
 }
 
 export interface KomgaBookRow {
@@ -490,55 +510,57 @@ export class KomgaCatalogRepository {
     return numbering;
   }
 
-  async listReferentialValues(scope: KomgaScope, kind: 'genre' | 'tag' | 'publisher' | 'language'): Promise<string[]> {
-    if (scope.libraryIds.length === 0) return [];
+  async listReferentialValues(
+    scope: KomgaScope,
+    kind: 'genre' | 'tag' | 'publisher' | 'language',
+    window: KomgaReferentialWindow,
+  ): Promise<KomgaReferentialValues> {
+    if (scope.libraryIds.length === 0) return { values: [], total: 0 };
     const where = and(...this.baseClauses(scope))!;
-    const limit = KOMGA_REFERENTIAL_MAX_ROWS;
+    const pattern = window.search?.trim() ? buildSearchPattern(window.search.trim()) : null;
 
-    if (kind === 'genre') {
-      const rows = await this.db
-        .selectDistinct({ name: genres.name })
-        .from(genres)
-        .innerJoin(bookGenres, eq(bookGenres.genreId, genres.id))
-        .innerJoin(books, eq(books.id, bookGenres.bookId))
-        .where(where)
-        .orderBy(genres.name)
-        .limit(limit);
-      return rows.map((row) => row.name);
-    }
-    if (kind === 'tag') {
-      const rows = await this.db
-        .selectDistinct({ name: tags.name })
-        .from(tags)
-        .innerJoin(bookTags, eq(bookTags.tagId, tags.id))
-        .innerJoin(books, eq(books.id, bookTags.bookId))
-        .where(where)
-        .orderBy(tags.name)
-        .limit(limit);
-      return rows.map((row) => row.name);
+    let column: SQL;
+    let from: SQL;
+    if (kind === 'genre' || kind === 'tag') {
+      const [dictionary, link, linkTerm, linkBook] =
+        kind === 'genre' ? [genres, bookGenres, bookGenres.genreId, bookGenres.bookId] : [tags, bookTags, bookTags.tagId, bookTags.bookId];
+      column = sql`${dictionary.name}`;
+      const searchClause = pattern ? sql` AND ${accentInsensitiveIlike(dictionary.name, pattern)}` : sql``;
+      from = sql`FROM ${dictionary} INNER JOIN ${link} ON ${linkTerm} = ${dictionary.id} INNER JOIN ${books} ON ${books.id} = ${linkBook} WHERE ${where}${searchClause}`;
+    } else {
+      const valueColumn = kind === 'publisher' ? bookMetadata.publisher : bookMetadata.language;
+      column = sql`${valueColumn}`;
+      const searchClause = pattern ? sql` AND ${accentInsensitiveIlike(valueColumn, pattern)}` : sql``;
+      from = sql`FROM ${bookMetadata} INNER JOIN ${books} ON ${books.id} = ${bookMetadata.bookId} WHERE ${where} AND ${valueColumn} IS NOT NULL AND ${valueColumn} <> ''${searchClause}`;
     }
 
-    const column = kind === 'publisher' ? bookMetadata.publisher : bookMetadata.language;
-    const rows = await this.db
-      .selectDistinct({ value: column })
-      .from(bookMetadata)
-      .innerJoin(books, eq(books.id, bookMetadata.bookId))
-      .where(and(where, sql`${column} IS NOT NULL`, sql`${column} <> ''`))
-      .orderBy(column)
-      .limit(limit);
-    return rows.map((row) => row.value).filter((value): value is string => value !== null);
+    const [rows, count] = await Promise.all([
+      this.db.execute<{ name: string }>(
+        sql`SELECT DISTINCT ${column} AS name ${from} ORDER BY ${column} LIMIT ${window.limit} OFFSET ${window.offset}`,
+      ),
+      this.db.execute<{ total: string }>(sql`SELECT count(DISTINCT ${column})::text AS total ${from}`),
+    ]);
+    return { values: rows.rows.map((row) => row.name), total: Number(count.rows[0]?.total ?? 0) };
   }
 
-  async listReferentialAuthors(scope: KomgaScope, search?: string): Promise<KomgaAuthorRef[]> {
-    if (scope.libraryIds.length === 0) return [];
+  async listReferentialAuthors(scope: KomgaScope, window: KomgaAuthorWindow): Promise<KomgaReferentialAuthors> {
+    if (scope.libraryIds.length === 0) return { authors: [], total: 0 };
     const members = this.libraryMembersCte(scope);
-    const searchClause = search?.trim() ? sql`AND ${accentInsensitiveIlike(sql`credits.name`, buildSearchPattern(search.trim()))}` : sql``;
-    const result = await this.db.execute<{ name: string; role: KomgaAuthorRole }>(
-      sql`WITH members AS (${members}), credits AS (${this.creditsUnion()})
-      SELECT credits.name, credits.role FROM credits WHERE credits.name IS NOT NULL AND credits.name <> '' ${searchClause}
-      GROUP BY credits.name, credits.role ORDER BY lower(credits.name), credits.name, credits.role LIMIT ${KOMGA_REFERENTIAL_MAX_ROWS}`,
-    );
-    return result.rows.map((row) => ({ name: row.name, role: row.role }));
+    const filters: SQL[] = [sql`credits.name IS NOT NULL`, sql`credits.name <> ''`];
+    if (window.search?.trim()) filters.push(accentInsensitiveIlike(sql`credits.name`, buildSearchPattern(window.search.trim())));
+    if (window.role?.trim()) filters.push(sql`credits.role = ${window.role.trim().toLowerCase()}`);
+    const grouped = sql`SELECT credits.name, credits.role FROM credits WHERE ${joinSql(filters, sql` AND `)} GROUP BY credits.name, credits.role`;
+
+    const [rows, count] = await Promise.all([
+      this.db.execute<{ name: string; role: KomgaAuthorRole }>(
+        sql`WITH members AS (${members}), credits AS (${this.creditsUnion()})
+        SELECT name, role FROM (${grouped}) AS authors ORDER BY lower(name), name, role LIMIT ${window.limit} OFFSET ${window.offset}`,
+      ),
+      this.db.execute<{ total: string }>(
+        sql`WITH members AS (${members}), credits AS (${this.creditsUnion()}) SELECT count(*)::text AS total FROM (${grouped}) AS authors`,
+      ),
+    ]);
+    return { authors: rows.rows.map((row) => ({ name: row.name, role: row.role })), total: Number(count.rows[0]?.total ?? 0) };
   }
 
   private seriesSource(scope: KomgaScope, filters: KomgaSeriesFilters, key?: KomgaSeriesKey): SQL | null {
