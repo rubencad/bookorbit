@@ -67,6 +67,7 @@ function makeBookFile(overrides: Record<string, unknown> = {}) {
     format: 'epub',
     role: 'content',
     sortOrder: 0,
+    pageCount: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -141,6 +142,10 @@ const mockGateway = {
   emitCoverRefreshProgress: vi.fn(),
 };
 
+const mockComicPages = {
+  refreshPageCount: vi.fn().mockResolvedValue(2),
+};
+
 const mockMetadata = {
   extractAndSave: vi.fn().mockResolvedValue(undefined),
   refreshCoverForBook: vi.fn().mockResolvedValue(false),
@@ -165,6 +170,7 @@ function makeService(
     mockGateway as any,
     notificationService as any,
     selfWriteRegistry,
+    mockComicPages as any,
     autoFetchOrchestrator as any,
     achievementEvents as any,
   );
@@ -1584,6 +1590,115 @@ describe('audio multi-file audiobook', () => {
     expect(mockMetadata.extractAudioFileDuration).toHaveBeenCalledTimes(1);
     expect(mockMetadata.extractAudioFileDuration).toHaveBeenCalledWith(expect.any(Number), '/library/Book/book.m4b');
     expect(mockMetadata.aggregateAudioDuration).toHaveBeenCalledWith(expect.any(Number));
+  });
+
+  it('counts new comic files only', async () => {
+    const issue = makeFileStat({ absolutePath: '/library/Book/issue-01.cbz', relPath: 'Book/issue-01.cbz' });
+    const rarIssue = makeFileStat({ absolutePath: '/library/Book/issue-01.cbr', relPath: 'Book/issue-01.cbr', ino: 1002n });
+    const epub = makeFileStat({ absolutePath: '/library/Book/issue-01.epub', relPath: 'Book/issue-01.epub', ino: 1003n });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [issue, rarIssue, epub])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    mockComicPages.refreshPageCount.mockResolvedValue(2);
+
+    const repo = makeRepo();
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockComicPages.refreshPageCount).toHaveBeenCalledTimes(2);
+    expect(mockComicPages.refreshPageCount).toHaveBeenCalledWith({
+      id: expect.any(Number),
+      absolutePath: '/library/Book/issue-01.cbz',
+      format: 'cbz',
+    });
+    expect(mockComicPages.refreshPageCount).toHaveBeenCalledWith({
+      id: expect.any(Number),
+      absolutePath: '/library/Book/issue-01.cbr',
+      format: 'cbr',
+    });
+  });
+
+  it('recounts an unchanged comic file whose stored page count is missing', async () => {
+    const mtime = new Date('2024-01-01');
+    const fileStat = makeFileStat({ absolutePath: '/library/Author/Book/issue.cbz', relPath: 'Author/Book/issue.cbz', mtime });
+    const repo = makeRepo({
+      findBookFilesByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([
+          makeBookFile({ absolutePath: fileStat.absolutePath, format: 'cbz', mtime, sizeBytes: fileStat.sizeBytes, pageCount: null }),
+        ]),
+      findBooksByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Author/Book', status: 'present' }]),
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Author/Book', [fileStat])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(repo.updateBookFile).not.toHaveBeenCalled();
+    expect(mockComicPages.refreshPageCount).toHaveBeenCalledWith({ id: 1, absolutePath: fileStat.absolutePath, format: 'cbz' });
+  });
+
+  it('skips unchanged comics with a stored page count', async () => {
+    const mtime = new Date('2024-01-01');
+    const fileStat = makeFileStat({ absolutePath: '/library/Author/Book/issue.cbz', relPath: 'Author/Book/issue.cbz', mtime });
+    const repo = makeRepo({
+      findBookFilesByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([
+          makeBookFile({ absolutePath: fileStat.absolutePath, format: 'cbz', mtime, sizeBytes: fileStat.sizeBytes, pageCount: 24 }),
+        ]),
+      findBooksByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Author/Book', status: 'present' }]),
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Author/Book', [fileStat])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockComicPages.refreshPageCount).not.toHaveBeenCalled();
+  });
+
+  it('continues the scan when comic page counting fails', async () => {
+    const issue = makeFileStat({ absolutePath: '/library/Book/broken.cb7', relPath: 'Book/broken.cb7' });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [issue])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    mockComicPages.refreshPageCount.mockRejectedValueOnce(new Error('CB7 archive is unreadable'));
+
+    const repo = makeRepo();
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockComicPages.refreshPageCount).toHaveBeenCalledWith({ id: expect.any(Number), absolutePath: '/library/Book/broken.cb7', format: 'cb7' });
+    expect(repo.promoteProcessingBookToPresent).toHaveBeenCalled();
+    expect(repo.completeScanJob).toHaveBeenCalled();
   });
 
   it('merges chapters across every audio file of a multi-file audiobook, in playback order', async () => {

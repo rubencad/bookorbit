@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { isComicContainerFormat } from '../../common/comic-format-detect';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { naturalCompare } from '../../common/utils/natural-sort.utils';
 import { pathsReferToSameEntry } from '../../common/utils/path-identity.utils';
@@ -20,6 +21,7 @@ import type {
 import { NotificationType } from '@bookorbit/types';
 import { AchievementEventsService, ACHIEVEMENT_EVENT_LIBRARY_CATALOG_CHANGED } from '../achievement/achievement-events.service';
 import { BookMetadataFetchOrchestratorService } from '../book-metadata-fetch/book-metadata-fetch-orchestrator.service';
+import { ComicPageService } from '../comic-pages/comic-page.service';
 import { MetadataService } from '../metadata/metadata.service';
 import { NotificationService } from '../notification/notification.service';
 import { ScanGateway } from './scan.gateway';
@@ -50,6 +52,7 @@ interface FileByPathEntry {
   mtime: Date | null;
   fileHash: string | null;
   sortOrder: number | null;
+  pageCount: number | null;
 }
 
 interface FileByInoEntry {
@@ -124,6 +127,7 @@ interface RegisteredFile {
   isNew: boolean;
   wasReassigned: boolean;
   wasChanged: boolean;
+  pageCount: number | null;
 }
 
 interface MetadataExtractionSource {
@@ -137,6 +141,7 @@ interface ProcessedFileResult {
   reassigned: boolean;
   changed: boolean;
   fileId: number | null;
+  pageCount: number | null;
 }
 
 interface UpsertBookResult extends BookEntry {
@@ -204,6 +209,7 @@ export class ScannerService implements OnApplicationBootstrap {
     private readonly scanGateway: ScanGateway,
     private readonly notificationService: NotificationService,
     private readonly selfWriteRegistry: SelfWriteRegistry,
+    private readonly comicPageService: ComicPageService,
     @Optional() private readonly autoFetchOrchestrator?: BookMetadataFetchOrchestratorService,
     @Optional() private readonly achievementEvents?: AchievementEventsService,
   ) {}
@@ -296,6 +302,7 @@ export class ScannerService implements OnApplicationBootstrap {
       mtime: Date | null;
       fileHash: string | null;
       sortOrder?: number | null;
+      pageCount?: number | null;
     }>,
   ): ScanLookupMaps {
     const bookByFolderPath = new Map<string, BookEntry>(
@@ -316,7 +323,16 @@ export class ScannerService implements OnApplicationBootstrap {
     const fileByPath = new Map<string, FileByPathEntry>(
       knownFiles.map((f) => [
         f.absolutePath,
-        { id: f.id, bookId: f.bookId, ino: f.ino, sizeBytes: f.sizeBytes, mtime: f.mtime, fileHash: f.fileHash, sortOrder: f.sortOrder ?? null },
+        {
+          id: f.id,
+          bookId: f.bookId,
+          ino: f.ino,
+          sizeBytes: f.sizeBytes,
+          mtime: f.mtime,
+          fileHash: f.fileHash,
+          sortOrder: f.sortOrder ?? null,
+          pageCount: f.pageCount ?? null,
+        },
       ]),
     );
 
@@ -1562,6 +1578,7 @@ export class ScannerService implements OnApplicationBootstrap {
           isNew: processResult.isNew,
           wasReassigned: processResult.reassigned,
           wasChanged: processResult.changed,
+          pageCount: processResult.pageCount,
         });
         retainedFileIds.add(processResult.fileId);
       }
@@ -1672,6 +1689,23 @@ export class ScannerService implements OnApplicationBootstrap {
       } catch (err) {
         this.logger.warn(
           `[scanner.merge_audio_chapters] [fail] bookId=${book.id} files=${orderedAudioPaths.length} errorClass=${err instanceof Error ? err.name : 'Error'} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - audio chapter merge failed`,
+        );
+      }
+    }
+
+    // 3f: Count pages of every new, reassigned, changed or still uncounted comic file.
+    const uncountedComicFiles = contentFiles.filter(
+      (file) =>
+        isComicContainerFormat(file.format) &&
+        (hasMetadataSourceChanged(file) || file.pageCount === null) &&
+        !this.selfWriteRegistry.isSuppressed(file.absolutePath),
+    );
+    for (const comicFile of uncountedComicFiles) {
+      try {
+        await this.comicPageService.refreshPageCount({ id: comicFile.fileId, absolutePath: comicFile.absolutePath, format: comicFile.format });
+      } catch (err) {
+        this.logger.warn(
+          `[scanner.count_comic_pages] [fail] bookId=${book.id} fileId=${comicFile.fileId} path="${sanitizeLogValue(comicFile.absolutePath)}" errorClass=${err instanceof Error ? err.name : 'Error'} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - comic page count failed`,
         );
       }
     }
@@ -2158,7 +2192,7 @@ export class ScannerService implements OnApplicationBootstrap {
     const sortOrderUnchanged = sortOrder === byPath.sortOrder;
 
     if (sizeUnchanged && mtimeUnchanged && inoUnchanged && !reassigned && sortOrderUnchanged) {
-      return { isNew: false, reassigned: false, changed: false, fileId: byPath.id };
+      return { isNew: false, reassigned: false, changed: false, fileId: byPath.id, pageCount: byPath.pageCount };
     }
 
     await waitForStability(fileStat.absolutePath, fileStat.mtime.getTime());
@@ -2192,6 +2226,7 @@ export class ScannerService implements OnApplicationBootstrap {
       mtime: fileStat.mtime,
       fileHash: byPath.fileHash,
       sortOrder,
+      pageCount: byPath.pageCount,
     });
     if (fileStat.ino !== 0n) {
       fileByIno.set(fileStat.ino, {
@@ -2202,7 +2237,7 @@ export class ScannerService implements OnApplicationBootstrap {
         mtime: fileStat.mtime,
       });
     }
-    return { isNew: false, reassigned, changed: !sizeUnchanged || !mtimeUnchanged, fileId: byPath.id };
+    return { isNew: false, reassigned, changed: !sizeUnchanged || !mtimeUnchanged, fileId: byPath.id, pageCount: byPath.pageCount };
   }
 
   private async resolveByLocalIno(
@@ -2247,9 +2282,10 @@ export class ScannerService implements OnApplicationBootstrap {
       mtime: fileStat.mtime,
       fileHash: oldPathEntry?.fileHash ?? null,
       sortOrder,
+      pageCount: null,
     });
     fileByIno.set(fileStat.ino, { id: byIno.id, bookId, absolutePath: fileStat.absolutePath, sizeBytes: fileStat.sizeBytes, mtime: fileStat.mtime });
-    return { isNew: false, reassigned: byIno.bookId !== bookId, changed: !sizeUnchanged || !mtimeUnchanged, fileId: byIno.id };
+    return { isNew: false, reassigned: byIno.bookId !== bookId, changed: !sizeUnchanged || !mtimeUnchanged, fileId: byIno.id, pageCount: null };
   }
 
   private async resolveByGlobalIno(
@@ -2313,6 +2349,7 @@ export class ScannerService implements OnApplicationBootstrap {
       mtime: fileStat.mtime,
       fileHash: globalByIno.file.fileHash,
       sortOrder,
+      pageCount: null,
     });
     fileByIno.set(fileStat.ino, {
       id: globalByIno.file.id,
@@ -2326,6 +2363,7 @@ export class ScannerService implements OnApplicationBootstrap {
       reassigned: globalByIno.file.bookId !== bookId,
       changed: !sizeUnchanged || !mtimeUnchanged,
       fileId: globalByIno.file.id,
+      pageCount: null,
     };
   }
 
@@ -2350,7 +2388,7 @@ export class ScannerService implements OnApplicationBootstrap {
         this.logger.debug(
           `[scanner.process_file] [end] bookId=${bookId} path="${sanitizeLogValue(fileStat.absolutePath)}" action=skip_inaccessible - file no longer accessible`,
         );
-        return { isNew: false, reassigned: false, changed: false, fileId: null };
+        return { isNew: false, reassigned: false, changed: false, fileId: null, pageCount: null };
       }
       throw err;
     }
@@ -2388,6 +2426,7 @@ export class ScannerService implements OnApplicationBootstrap {
           mtime: fileStat.mtime,
           fileHash: byHash.fileHash,
           sortOrder,
+          pageCount: null,
         });
         if (fileStat.ino !== 0n) {
           fileByIno.set(fileStat.ino, {
@@ -2398,7 +2437,7 @@ export class ScannerService implements OnApplicationBootstrap {
             mtime: fileStat.mtime,
           });
         }
-        return { isNew: false, reassigned: byHash.bookId !== bookId, changed: false, fileId: byHash.id };
+        return { isNew: false, reassigned: byHash.bookId !== bookId, changed: false, fileId: byHash.id, pageCount: null };
       }
 
       let globalByHash = await this.scannerRepo.findBookFileWithContextByHash(fileHash);
@@ -2448,6 +2487,7 @@ export class ScannerService implements OnApplicationBootstrap {
           mtime: fileStat.mtime,
           fileHash,
           sortOrder,
+          pageCount: null,
         });
         if (fileStat.ino !== 0n) {
           fileByIno.set(fileStat.ino, {
@@ -2458,7 +2498,7 @@ export class ScannerService implements OnApplicationBootstrap {
             mtime: fileStat.mtime,
           });
         }
-        return { isNew: false, reassigned: globalByHash.file.bookId !== bookId, changed: false, fileId: globalByHash.file.id };
+        return { isNew: false, reassigned: globalByHash.file.bookId !== bookId, changed: false, fileId: globalByHash.file.id, pageCount: null };
       }
     }
 
@@ -2490,6 +2530,7 @@ export class ScannerService implements OnApplicationBootstrap {
           mtime: concurrent.file.mtime,
           fileHash: concurrent.file.fileHash,
           sortOrder: concurrent.file.sortOrder,
+          pageCount: concurrent.file.pageCount,
         },
         fileStat,
         format,
@@ -2511,6 +2552,7 @@ export class ScannerService implements OnApplicationBootstrap {
       mtime: fileStat.mtime,
       fileHash,
       sortOrder,
+      pageCount: null,
     });
     if (fileStat.ino !== 0n) {
       fileByIno.set(fileStat.ino, {
@@ -2521,7 +2563,7 @@ export class ScannerService implements OnApplicationBootstrap {
         mtime: fileStat.mtime,
       });
     }
-    return { isNew: true, reassigned: false, changed: true, fileId: created.id };
+    return { isNew: true, reassigned: false, changed: true, fileId: created.id, pageCount: null };
   }
 
   private async pruneMissingBookFiles(

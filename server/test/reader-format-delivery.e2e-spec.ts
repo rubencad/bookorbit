@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto';
+import { utimes } from 'fs/promises';
+import { dirname } from 'path';
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 
 import * as schema from '../src/db/schema';
 import {
@@ -330,6 +332,33 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
   });
 
   describe('comic page delivery contract', () => {
+    it('stores page counts for comic files during scan', async () => {
+      const rows = await ctx.db
+        .select({ id: schema.bookFiles.id, pageCount: schema.bookFiles.pageCount })
+        .from(schema.bookFiles)
+        .where(inArray(schema.bookFiles.id, [sharedCbz.bookFileId, sharedCbr.bookFileId, sharedCb7.bookFileId, sharedEpub.bookFileId]));
+      const pageCountByFileId = new Map(rows.map((row) => [row.id, row.pageCount]));
+
+      expect(pageCountByFileId.get(sharedCbz.bookFileId)).toBe(2);
+      expect(pageCountByFileId.get(sharedCbr.bookFileId)).toBe(2);
+      expect(pageCountByFileId.get(sharedCb7.bookFileId)).toBe(2);
+      expect(pageCountByFileId.get(sharedEpub.bookFileId)).toBeNull();
+    });
+
+    it('retries a missing comic page count on the next scan', async () => {
+      await ctx.db.update(schema.bookFiles).set({ pageCount: null }).where(eq(schema.bookFiles.id, sharedCbz.bookFileId));
+      const touchedAt = new Date(Date.now() + 5_000);
+      await utimes(dirname(sharedCbz.absolutePath), touchedAt, touchedAt);
+
+      await triggerAndWaitForLibraryScan(ctx, sharedLibrary.libraryId);
+
+      const [row] = await ctx.db
+        .select({ pageCount: schema.bookFiles.pageCount })
+        .from(schema.bookFiles)
+        .where(eq(schema.bookFiles.id, sharedCbz.bookFileId));
+      expect(row.pageCount).toBe(2);
+    });
+
     it('returns page counts, streams ordered pages, and rejects invalid page requests and unsupported formats', async () => {
       const pagesResponse = await ctx.app.inject({
         method: 'GET',

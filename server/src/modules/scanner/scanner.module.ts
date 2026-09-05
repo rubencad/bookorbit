@@ -7,6 +7,7 @@ import { SelfWriteRegistryModule } from '../../common/self-write-registry.module
 import { AchievementModule } from '../achievement/achievement.module';
 import { AuthModule } from '../auth/auth.module';
 import { BookMetadataFetchModule } from '../book-metadata-fetch/book-metadata-fetch.module';
+import { ComicPagesModule } from '../comic-pages/comic-pages.module';
 import { MetadataModule } from '../metadata/metadata.module';
 import { NotificationModule } from '../notification/notification.module';
 import { FileEventProcessorService } from './file-event-processor.service';
@@ -32,6 +33,7 @@ import { ScannerService } from './scanner.service';
         signOptions: { expiresIn: config.getOrThrow<StringValue | number>('auth.jwtExpiresIn') },
       }),
     }),
+    ComicPagesModule,
   ],
   controllers: [ScannerController],
   providers: [ScannerService, ScannerRepository, ScanGateway, ScanJobStore, FileEventProcessorService, FileWatcherService],

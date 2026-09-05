@@ -6,10 +6,12 @@ vi.mock('../book-metadata-fetch/book-metadata-fetch.module', () => ({ BookMetada
 vi.mock('../metadata/metadata.module', () => ({ MetadataModule: class MetadataModule {} }));
 vi.mock('../notification/notification.module', () => ({ NotificationModule: class NotificationModule {} }));
 vi.mock('../achievement/achievement.module', () => ({ AchievementModule: class AchievementModule {} }));
+vi.mock('../comic-pages/comic-pages.module', () => ({ ComicPagesModule: class ComicPagesModule {} }));
 
 import { AchievementModule } from '../achievement/achievement.module';
 import { AuthModule } from '../auth/auth.module';
 import { BookMetadataFetchModule } from '../book-metadata-fetch/book-metadata-fetch.module';
+import { ComicPagesModule } from '../comic-pages/comic-pages.module';
 import { MetadataModule } from '../metadata/metadata.module';
 import { NotificationModule } from '../notification/notification.module';
 import { FileEventProcessorService } from './file-event-processor.service';
@@ -31,6 +33,7 @@ describe('ScannerModule', () => {
     expect(imports[4]).toEqual(expect.objectContaining({ forwardRef: expect.any(Function) }));
     expect(imports[5]).toEqual(expect.objectContaining({ forwardRef: expect.any(Function) }));
     expect(imports[6]).toEqual(expect.objectContaining({ module: expect.any(Function) }));
+    expect(imports[7]).toBe(ComicPagesModule);
 
     expect(Reflect.getMetadata('controllers', ScannerModule)).toEqual([ScannerController]);
     expect(Reflect.getMetadata('providers', ScannerModule)).toEqual([

@@ -243,6 +243,7 @@ export class ScannerRepository {
         mtime: bookFiles.mtime,
         fileHash: bookFiles.fileHash,
         sortOrder: bookFiles.sortOrder,
+        pageCount: bookFiles.pageCount,
       })
       .from(bookFiles)
       .where(eq(bookFiles.libraryFolderId, libraryFolderId));
