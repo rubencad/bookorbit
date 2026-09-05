@@ -26,8 +26,29 @@ function sampleBook(overrides?: Partial<OpdsBookEntry>): OpdsBookEntry {
     hasCover: true,
     authors: ['Brandon Sanderson'],
     files: [{ id: 10, format: 'epub' }],
+    comicFile: null,
+    progress: null,
     ...overrides,
   };
+}
+
+function sampleComic(overrides?: Partial<OpdsBookEntry>): OpdsBookEntry {
+  return sampleBook({
+    id: 42,
+    title: 'Saga Volume 1',
+    files: [{ id: 7, format: 'cbz' }],
+    comicFile: { id: 7, format: 'cbz', pageCount: 35 },
+    progress: { pageNumber: 10, lastReadAt: new Date('2026-01-10T10:01:11.789Z') },
+    ...overrides,
+  });
+}
+
+function acquisitionFeed(books: OpdsBookEntry[]): string {
+  return makeService().generateAcquisitionFeed('Catalog', 'urn:bookorbit:catalog', books, books.length, 1, 50, `${BASE}/catalog`, 'tok');
+}
+
+function streamLinkLine(xml: string): string | undefined {
+  return xml.split('\n').find((line) => line.includes('opds-pse/stream'));
 }
 
 describe('OpdsService', () => {
@@ -378,6 +399,71 @@ describe('OpdsService', () => {
       expect(xml).toContain('application/pdf');
       expect(xml).toContain('fileId=10');
       expect(xml).toContain('fileId=11');
+    });
+  });
+
+  describe('page streaming extension', () => {
+    it('declares the pse namespace on navigation and acquisition feeds', () => {
+      expect(makeService().generateRootNavigation()).toContain('xmlns:pse="http://vaemendis.net/opds-pse/ns"');
+      expect(acquisitionFeed([])).toContain('xmlns:pse="http://vaemendis.net/opds-pse/ns"');
+    });
+
+    it('advertises a stream link with the page count, last read page, and read date', () => {
+      const link = streamLinkLine(acquisitionFeed([sampleComic()]));
+
+      expect(link).toBe(
+        '  <link rel="http://vaemendis.net/opds-pse/stream" href="/api/v1/opds/42/pages/{pageNumber}?fileId=7&amp;maxWidth={maxWidth}" type="image/jpeg" pse:count="35" pse:lastRead="10" pse:lastReadDate="2026-01-10T10:01:11Z"/>',
+      );
+    });
+
+    it('keeps the page number and width placeholders unescaped and the ampersand escaped', () => {
+      const link = streamLinkLine(acquisitionFeed([sampleComic()]))!;
+
+      expect(link).toContain('/pages/{pageNumber}?');
+      expect(link).toContain('&amp;maxWidth={maxWidth}"');
+      expect(link).not.toContain('%7B');
+      expect(link).not.toContain('&maxWidth');
+    });
+
+    it('parses as a link element carrying the pse attributes', () => {
+      const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+      const feed = parser.parse(acquisitionFeed([sampleComic()])) as { feed: { entry: { link: Record<string, string>[] } } };
+      const stream = feed.feed.entry.link.find((link) => link.rel === 'http://vaemendis.net/opds-pse/stream')!;
+
+      expect(stream['pse:count']).toBe('35');
+      expect(stream['pse:lastRead']).toBe('10');
+      expect(stream['pse:lastReadDate']).toBe('2026-01-10T10:01:11Z');
+      expect(stream.href).toBe('/api/v1/opds/42/pages/{pageNumber}?fileId=7&maxWidth={maxWidth}');
+    });
+
+    it('omits the last read attributes without progress or when the reader has not turned a page', () => {
+      const unread = streamLinkLine(acquisitionFeed([sampleComic({ progress: null })]))!;
+      const opened = streamLinkLine(acquisitionFeed([sampleComic({ progress: { pageNumber: 0, lastReadAt: new Date() } })]))!;
+      const unknownPage = streamLinkLine(acquisitionFeed([sampleComic({ progress: { pageNumber: null, lastReadAt: new Date() } })]))!;
+
+      for (const link of [unread, opened, unknownPage]) {
+        expect(link).toContain('pse:count="35"');
+        expect(link).not.toContain('pse:lastRead');
+      }
+    });
+
+    it('never reports a last read page beyond the page count', () => {
+      const link = streamLinkLine(acquisitionFeed([sampleComic({ progress: { pageNumber: 99, lastReadAt: new Date() } })]))!;
+
+      expect(link).toContain('pse:lastRead="35"');
+    });
+
+    it('omits the stream link for books without a comic file or without a known page count', () => {
+      expect(streamLinkLine(acquisitionFeed([sampleBook()]))).toBeUndefined();
+      expect(streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: null } })]))).toBeUndefined();
+      expect(streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: 0 } })]))).toBeUndefined();
+    });
+
+    it('keeps the download link next to the stream link', () => {
+      const xml = acquisitionFeed([sampleComic()]);
+
+      expect(xml).toContain('href="/api/v1/opds/42/download?fileId=7" type="application/vnd.comicbook+zip" title="CBZ"');
+      expect(streamLinkLine(xml)).toBeDefined();
     });
   });
 

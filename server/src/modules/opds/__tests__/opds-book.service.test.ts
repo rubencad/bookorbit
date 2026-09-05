@@ -49,8 +49,9 @@ function makeService(selectQueue: unknown[] = [], queryBuilderOverrides: Record<
     buildWhere: vi.fn().mockReturnValue(undefined),
     ...queryBuilderOverrides,
   };
-  const service = new OpdsBookService(db as never, queryBuilder as never);
-  return { service, db, queryBuilder };
+  const comicPageService = { queuePageCount: vi.fn().mockReturnValue(true) };
+  const service = new OpdsBookService(db as never, queryBuilder as never, comicPageService as never);
+  return { service, db, queryBuilder, comicPageService };
 }
 
 function collectValues(value: unknown, seen = new WeakSet<object>()): unknown[] {
@@ -69,11 +70,11 @@ function collectValues(value: unknown, seen = new WeakSet<object>()): unknown[] 
 describe('OpdsBookService', () => {
   it('returns accessible library ids for superusers and regular users', async () => {
     const superDb = makeDb([[{ id: 1 }, { id: 4 }]]);
-    const superService = new OpdsBookService(superDb as never, {} as never);
+    const superService = new OpdsBookService(superDb as never, {} as never, {} as never);
     await expect(superService.getAccessibleLibraryIds(7, true)).resolves.toEqual([1, 4]);
 
     const userDb = makeDb([[{ libraryId: 2 }, { libraryId: 3 }]]);
-    const userService = new OpdsBookService(userDb as never, {} as never);
+    const userService = new OpdsBookService(userDb as never, {} as never, {} as never);
     await expect(userService.getAccessibleLibraryIds(7, false)).resolves.toEqual([2, 3]);
   });
 
@@ -200,7 +201,7 @@ describe('OpdsBookService', () => {
     accessSpy.mockResolvedValueOnce([1]);
     fetchSpy.mockResolvedValueOnce([{ id: 11 }, { id: 10 }]);
     await expect(service.getRandomBooks(7, 2)).resolves.toEqual([{ id: 11 }, { id: 10 }]);
-    expect(fetchSpy).toHaveBeenCalledWith([11, 10]);
+    expect(fetchSpy).toHaveBeenCalledWith([11, 10], { userId: 7 });
 
     const chains = (db.select as ReturnType<typeof vi.fn>).mock.results.map((r) => r.value as Record<string, unknown>);
     const orderBy = chains.at(-1)!['orderBy'] as ReturnType<typeof vi.fn>;
@@ -314,11 +315,102 @@ describe('OpdsBookService', () => {
     const filledPrivateService = testable(filled.service);
     const fetchSpy = vi.spyOn(filledPrivateService, 'fetchBookEntries').mockResolvedValue([{ id: 3 }, { id: 1 }]);
 
-    await expect(filledPrivateService.paginatedBookQuery({ kind: 'where' }, 'author_asc', 1, 25)).resolves.toEqual({
+    await expect(filledPrivateService.paginatedBookQuery({ kind: 'where' }, 'author_asc', 1, 25, 9)).resolves.toEqual({
       entries: [{ id: 3 }, { id: 1 }],
       total: 2,
     });
-    expect(fetchSpy).toHaveBeenCalledWith([3, 1], {});
+    expect(fetchSpy).toHaveBeenCalledWith([3, 1], { userId: 9 });
+  });
+
+  describe('comic files on hydrated entries', () => {
+    const metaRow = (id: number) => ({
+      id,
+      folderPath: `/books/comic-${id}`,
+      addedAt: new Date('2026-01-01'),
+      bookUpdatedAt: new Date('2026-01-02'),
+      title: `Comic ${id}`,
+      description: null,
+      seriesId: null,
+      seriesName: null,
+      seriesIndex: null,
+      language: null,
+      publisher: null,
+      isbn13: null,
+      coverSource: null,
+    });
+
+    it('attaches the first comic file, its page count, and the reader progress on that file', async () => {
+      const fileRows = [
+        { bookId: 1, id: 11, format: 'epub', role: 'content', pageCount: null, absolutePath: '/books/comic-1/a.epub' },
+        { bookId: 1, id: 12, format: 'cbz', role: 'content', pageCount: 24, absolutePath: '/books/comic-1/a.cbz' },
+        { bookId: 1, id: 13, format: 'cbr', role: 'content', pageCount: 30, absolutePath: '/books/comic-1/a.cbr' },
+        { bookId: 2, id: 21, format: 'epub', role: 'content', pageCount: null, absolutePath: '/books/comic-2/b.epub' },
+      ];
+      const lastReadAt = new Date('2026-02-03T04:05:06Z');
+      const progressRows = [{ bookFileId: 12, pageNumber: 5, lastReadAt }];
+      const { service, db, comicPageService } = makeService([[metaRow(1), metaRow(2)], [], fileRows, progressRows]);
+
+      const entries = (await testable(service).fetchBookEntries([1, 2], { userId: 7 })) as { id: number; comicFile: unknown; progress: unknown }[];
+
+      expect(entries.map((entry) => [entry.id, entry.comicFile, entry.progress])).toEqual([
+        [1, { id: 12, format: 'cbz', pageCount: 24 }, { pageNumber: 5, lastReadAt }],
+        [2, null, null],
+      ]);
+      expect(db.select).toHaveBeenCalledTimes(4);
+      const progressChain = (db.select as ReturnType<typeof vi.fn>).mock.results[3]!.value as Record<string, ReturnType<typeof vi.fn>>;
+      expect(collectValues(progressChain.where.mock.calls[0]?.[0])).toEqual(expect.arrayContaining([7, 12]));
+      expect(comicPageService.queuePageCount).not.toHaveBeenCalled();
+    });
+
+    it('skips the progress query without a reader and when no entry has a comic file', async () => {
+      const comicOnly = makeService([
+        [metaRow(1)],
+        [],
+        [{ bookId: 1, id: 12, format: 'cbz', role: 'content', pageCount: 24, absolutePath: '/x.cbz' }],
+      ]);
+      const [entry] = (await testable(comicOnly.service).fetchBookEntries([1])) as { comicFile: unknown; progress: unknown }[];
+      expect(entry).toMatchObject({ comicFile: { id: 12, format: 'cbz', pageCount: 24 }, progress: null });
+      expect(comicOnly.db.select).toHaveBeenCalledTimes(3);
+
+      const epubOnly = makeService([
+        [metaRow(1)],
+        [],
+        [{ bookId: 1, id: 11, format: 'epub', role: 'content', pageCount: null, absolutePath: '/x.epub' }],
+      ]);
+      await testable(epubOnly.service).fetchBookEntries([1], { userId: 7 });
+      expect(epubOnly.db.select).toHaveBeenCalledTimes(3);
+      expect(epubOnly.comicPageService.queuePageCount).not.toHaveBeenCalled();
+    });
+
+    it('queues a recount for comic files without a stored page count and leaves the entry without one', async () => {
+      const fileRows = [{ bookId: 1, id: 12, format: 'cbr', role: 'content', pageCount: null, absolutePath: '/books/comic-1/a.cbr' }];
+      const { service, comicPageService } = makeService([[metaRow(1)], [], fileRows, []]);
+
+      const [entry] = (await testable(service).fetchBookEntries([1], { userId: 7 })) as { comicFile: unknown }[];
+
+      expect(entry).toMatchObject({ comicFile: { id: 12, format: 'cbr', pageCount: null } });
+      expect(comicPageService.queuePageCount).toHaveBeenCalledWith({ id: 12, absolutePath: '/books/comic-1/a.cbr', format: 'cbr', pageCount: null });
+    });
+  });
+
+  describe('getComicFile', () => {
+    it('returns the preferred comic content file of a book', async () => {
+      const row = { id: 12, absolutePath: '/books/a.cbz', format: 'cbz', pageCount: 24, mtime: new Date('2026-01-01') };
+      const { service, db } = makeService([[row]]);
+
+      await expect(service.getComicFile(1)).resolves.toEqual(row);
+      const chain = (db.select as ReturnType<typeof vi.fn>).mock.results[0]!.value as Record<string, ReturnType<typeof vi.fn>>;
+      expect(collectValues(chain.where.mock.calls[0]?.[0])).toEqual(expect.arrayContaining([1, 'content', 'cbz', 'cbr', 'cb7']));
+      expect(chain.limit).toHaveBeenCalledWith(1);
+    });
+
+    it('restricts the lookup to the requested file id and returns null for non-comic or foreign files', async () => {
+      const { service, db } = makeService([[]]);
+
+      await expect(service.getComicFile(1, 99)).resolves.toBeNull();
+      const chain = (db.select as ReturnType<typeof vi.fn>).mock.results[0]!.value as Record<string, ReturnType<typeof vi.fn>>;
+      expect(collectValues(chain.where.mock.calls[0]?.[0])).toEqual(expect.arrayContaining([1, 99]));
+    });
   });
 
   it('builds read-status, format, and id filters and forwards the user id to pagination', async () => {

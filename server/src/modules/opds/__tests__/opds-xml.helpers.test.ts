@@ -1,4 +1,4 @@
-import { esc, xmlEl, xmlLink, fileMimeType } from '../opds-xml.helpers';
+import { esc, fileMimeType, toRfc3339Seconds, xmlEl, xmlLink } from '../opds-xml.helpers';
 
 describe('esc', () => {
   it('escapes all five XML special characters', () => {
@@ -82,6 +82,18 @@ describe('xmlLink', () => {
     const result = xmlLink('self', '/feed?a=1&b=2', 'text/xml');
     expect(result).toContain('href="/feed?a=1&amp;b=2"');
   });
+
+  it('appends extra attributes after the type with escaped values', () => {
+    const result = xmlLink('stream', '/pages/{pageNumber}', 'image/jpeg', undefined, { 'pse:count': '12', 'pse:note': 'a "b"' });
+    expect(result).toBe('<link rel="stream" href="/pages/{pageNumber}" type="image/jpeg" pse:count="12" pse:note="a &quot;b&quot;"/>');
+  });
+});
+
+describe('toRfc3339Seconds', () => {
+  it('drops milliseconds and keeps the UTC designator', () => {
+    expect(toRfc3339Seconds(new Date('2026-01-10T10:01:11.789Z'))).toBe('2026-01-10T10:01:11Z');
+    expect(toRfc3339Seconds(new Date('2026-01-10T10:01:11.000Z'))).toBe('2026-01-10T10:01:11Z');
+  });
 });
 
 describe('fileMimeType', () => {
@@ -93,6 +105,8 @@ describe('fileMimeType', () => {
     ['fb2', 'application/x-fictionbook+xml'],
     ['cbz', 'application/vnd.comicbook+zip'],
     ['cbr', 'application/vnd.comicbook-rar'],
+    ['cb7', 'application/x-7z-compressed'],
+    ['kepub', 'application/epub+zip'],
     ['EPUB', 'application/epub+zip'],
     ['unknown', 'application/octet-stream'],
   ])('maps %s to %s', (format, expected) => {

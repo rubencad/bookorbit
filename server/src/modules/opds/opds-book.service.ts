@@ -3,6 +3,7 @@ import { SQL, and, count, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
+import { COMIC_CONTAINER_FORMATS, isComicContainerFormat } from '../../common/comic-format-detect';
 import { accentInsensitiveIlike, buildSearchPattern } from '../../common/utils/accent-insensitive-search.utils';
 import * as schema from '../../db/schema';
 import {
@@ -17,10 +18,12 @@ import {
   collectionBooks,
   smartScopes,
   libraries,
+  readingProgress,
   userBookStatus,
   userLibraryAccess,
 } from '../../db/schema';
 import { BookQueryBuilder } from '../book/book-query-builder.service';
+import { ComicPageService } from '../comic-pages/comic-page.service';
 import type { ContentFilterRules, GroupRule } from '@bookorbit/types';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { seriesIndexOrderBy } from '../../common/utils/series-index-sql.utils';
@@ -44,7 +47,10 @@ type SeriesFilter = { seriesId: number } | { normalizedName: string };
 
 type FetchBookEntriesOptions = {
   contextSeries?: SeriesFilter;
+  userId?: number;
 };
+
+type ComicFileRow = OpdsComicFile & { absolutePath: string };
 
 type ContextSeriesRow = {
   bookId: number;
@@ -89,6 +95,25 @@ const READ_STATUS_BUCKETS = {
 
 const ACTIVE_READ_STATUSES = [...READ_STATUS_BUCKETS.reading, ...READ_STATUS_BUCKETS.finished];
 
+export interface OpdsComicFile {
+  id: number;
+  format: string;
+  pageCount: number | null;
+}
+
+export interface OpdsComicProgress {
+  pageNumber: number | null;
+  lastReadAt: Date;
+}
+
+export interface OpdsComicFileRef {
+  id: number;
+  absolutePath: string;
+  format: string;
+  pageCount: number | null;
+  mtime: Date | null;
+}
+
 export interface OpdsBookEntry {
   id: number;
   title: string;
@@ -105,6 +130,8 @@ export interface OpdsBookEntry {
   hasCover: boolean;
   authors: string[];
   files: { id: number; format: string }[];
+  comicFile: OpdsComicFile | null;
+  progress: OpdsComicProgress | null;
 }
 
 export interface OpdsManifestFileRow {
@@ -137,6 +164,7 @@ export class OpdsBookService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly queryBuilder: BookQueryBuilder,
+    private readonly comicPageService: ComicPageService,
   ) {}
 
   async getAccessibleLibraryIds(userId: number, isSuperuser = false): Promise<number[]> {
@@ -442,7 +470,7 @@ export class OpdsBookService {
       clauses.push(...buildContentFilterClauses(contentFilters, this.db));
     }
     const where = and(...clauses);
-    return this.paginatedBookQuery(where!, 'recent', page, size);
+    return this.paginatedBookQuery(where!, 'recent', page, size, userId);
   }
 
   async getRandomBooks(userId: number, count: number, isSuperuser = false, contentFilters?: ContentFilterRules): Promise<OpdsBookEntry[]> {
@@ -464,7 +492,7 @@ export class OpdsBookService {
 
     const ids = idRows.map((row) => row.id);
     if (ids.length === 0) return [];
-    return this.fetchBookEntries(ids);
+    return this.fetchBookEntries(ids, { userId });
   }
 
   async getDistinctAuthors(userId: number, isSuperuser = false, contentFilters?: ContentFilterRules): Promise<{ name: string; bookCount: number }[]> {
@@ -681,6 +709,28 @@ export class OpdsBookService {
     };
   }
 
+  async getComicFile(bookId: number, fileId?: number): Promise<OpdsComicFileRef | null> {
+    const clauses: SQL[] = [eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content'), inArray(bookFiles.format, [...COMIC_CONTAINER_FORMATS])];
+    if (fileId !== undefined) clauses.push(eq(bookFiles.id, fileId));
+
+    const [file] = await this.db
+      .select({
+        id: bookFiles.id,
+        absolutePath: bookFiles.absolutePath,
+        format: bookFiles.format,
+        pageCount: bookFiles.pageCount,
+        mtime: bookFiles.mtime,
+      })
+      .from(bookFiles)
+      .innerJoin(books, eq(books.id, bookFiles.bookId))
+      .where(and(...clauses))
+      .orderBy(sql`case when ${bookFiles.id} = ${books.primaryFileId} then 0 else 1 end`, bookFiles.sortOrder, bookFiles.id)
+      .limit(1);
+
+    if (!file?.format) return null;
+    return { ...file, format: file.format };
+  }
+
   private async buildSmartScopeWhere(
     userId: number,
     smartScopeId: number,
@@ -785,7 +835,7 @@ export class OpdsBookService {
 
     const entries = await this.fetchBookEntries(
       idRows.map((r) => r.id),
-      options,
+      { ...options, userId },
     );
     return { entries, total: Number(total) };
   }
@@ -820,7 +870,14 @@ export class OpdsBookService {
         .where(inArray(bookAuthors.bookId, bookIds))
         .orderBy(bookAuthors.displayOrder),
       this.db
-        .select({ bookId: books.id, id: bookFiles.id, format: bookFiles.format, role: bookFiles.role })
+        .select({
+          bookId: books.id,
+          id: bookFiles.id,
+          format: bookFiles.format,
+          role: bookFiles.role,
+          pageCount: bookFiles.pageCount,
+          absolutePath: bookFiles.absolutePath,
+        })
         .from(bookFiles)
         .innerJoin(books, eq(books.id, bookFiles.bookId))
         .where(and(inArray(bookFiles.bookId, bookIds), eq(bookFiles.role, 'content')))
@@ -836,12 +893,19 @@ export class OpdsBookService {
     }
 
     const filesByBook = new Map<number, { id: number; format: string }[]>();
+    const comicFileByBook = new Map<number, ComicFileRow>();
     for (const row of fileRows) {
       if (row.role !== 'content') continue;
       const list = filesByBook.get(row.bookId) ?? [];
       list.push({ id: row.id, format: row.format ?? 'unknown' });
       filesByBook.set(row.bookId, list);
+      if (isComicContainerFormat(row.format) && !comicFileByBook.has(row.bookId)) {
+        comicFileByBook.set(row.bookId, { id: row.id, format: row.format, pageCount: row.pageCount, absolutePath: row.absolutePath });
+      }
     }
+
+    const progressByFile = await this.fetchComicProgress([...comicFileByBook.values()], options.userId);
+    this.queueMissingPageCounts([...comicFileByBook.values()]);
 
     const idOrder = new Map(bookIds.map((id, i) => [id, i]));
     const contextSeriesByBook = new Map(contextSeriesRows.map((row) => [row.bookId, row]));
@@ -849,6 +913,7 @@ export class OpdsBookService {
     return metaRows
       .map((row) => {
         const contextSeries = contextSeriesByBook.get(row.id);
+        const comicFile = comicFileByBook.get(row.id);
         return {
           id: row.id,
           title: row.title ?? row.folderPath.split('/').pop() ?? 'Untitled',
@@ -865,9 +930,37 @@ export class OpdsBookService {
           hasCover: row.coverSource !== null,
           authors: authorsByBook.get(row.id) ?? [],
           files: filesByBook.get(row.id) ?? [],
+          comicFile: comicFile ? { id: comicFile.id, format: comicFile.format, pageCount: comicFile.pageCount } : null,
+          progress: comicFile ? (progressByFile.get(comicFile.id) ?? null) : null,
         };
       })
       .sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
+  }
+
+  private async fetchComicProgress(comicFiles: ComicFileRow[], userId: number | undefined): Promise<Map<number, OpdsComicProgress>> {
+    if (userId === undefined || comicFiles.length === 0) return new Map();
+
+    const rows = await this.db
+      .select({ bookFileId: readingProgress.bookFileId, pageNumber: readingProgress.pageNumber, lastReadAt: readingProgress.lastReadAt })
+      .from(readingProgress)
+      .where(
+        and(
+          eq(readingProgress.userId, userId),
+          inArray(
+            readingProgress.bookFileId,
+            comicFiles.map((file) => file.id),
+          ),
+        ),
+      );
+
+    return new Map(rows.map((row) => [row.bookFileId, { pageNumber: row.pageNumber, lastReadAt: row.lastReadAt }]));
+  }
+
+  private queueMissingPageCounts(comicFiles: ComicFileRow[]): void {
+    for (const file of comicFiles) {
+      if (file.pageCount !== null) continue;
+      this.comicPageService.queuePageCount({ id: file.id, absolutePath: file.absolutePath, format: file.format, pageCount: null });
+    }
   }
 
   private resolveSeriesFilter(filters?: OpdsBookFilters): SeriesFilter | undefined {

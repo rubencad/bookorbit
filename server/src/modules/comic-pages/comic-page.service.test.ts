@@ -14,7 +14,7 @@ import {
   type ComicFixtureEntry,
 } from '../../../test/e2e/comics/comic-fixture-builder';
 import { buildStoredRarArchive } from '../../../test/e2e/comics/rar-stored-archive';
-import { ComicPageService, MAX_EXTRACTED_PAGE_BYTES } from './comic-page.service';
+import { ComicPageService, MAX_EXTRACTED_PAGE_BYTES, MAX_QUEUED_PAGE_COUNTS } from './comic-page.service';
 
 const TWO_PAGE_ENTRIES: ComicFixtureEntry[] = [
   { path: 'pages/010-spread.jpg', content: COMIC_PAGE_JPEG },
@@ -285,6 +285,69 @@ describe('ComicPageService', () => {
       await expect(service.backfillPageCounts(7, 500)).resolves.toEqual({ attempted: 0, counted: 0, failed: 0, moreRemaining: false });
 
       expect(repository.updatePageCount).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('queuePageCount', () => {
+    async function drained(): Promise<void> {
+      await vi.waitFor(() => expect((service as unknown as { draining: boolean }).draining).toBe(false));
+    }
+
+    it('counts a queued file in the background and stores the result', async () => {
+      const file = fileRef(await createCbzComicFixture(root, 'queue/one.cbz', TWO_PAGE_ENTRIES), 'cbz');
+
+      expect(service.queuePageCount(file)).toBe(true);
+      await vi.waitFor(() => expect(repository.updatePageCount).toHaveBeenCalledWith(file.id, 2));
+    });
+
+    it('ignores a file that is already queued and keeps counting the rest', async () => {
+      const first = fileRef(await createCbzComicFixture(root, 'queue/first.cbz', TWO_PAGE_ENTRIES), 'cbz');
+      const second = fileRef(await createCbzComicFixture(root, 'queue/second.cbz', TWO_PAGE_ENTRIES), 'cbz');
+
+      expect(service.queuePageCount(first)).toBe(true);
+      expect(service.queuePageCount(first)).toBe(false);
+      expect(service.queuePageCount(second)).toBe(true);
+      await drained();
+
+      expect(repository.updatePageCount).toHaveBeenCalledTimes(2);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(first.id, 2);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(second.id, 2);
+    });
+
+    it('records the failure of an unreadable file and continues with the next one', async () => {
+      const brokenPath = join(root, 'queue/broken.cbr');
+      await writeFile(brokenPath, Buffer.from('not a rar archive'));
+      const broken = fileRef(brokenPath, 'cbr');
+      const readable = fileRef(await createCbzComicFixture(root, 'queue/readable.cbz', TWO_PAGE_ENTRIES), 'cbz');
+
+      service.queuePageCount(broken);
+      service.queuePageCount(readable);
+      await drained();
+
+      expect(repository.updatePageCount).toHaveBeenCalledWith(broken.id, null);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(readable.id, 2);
+    });
+
+    it('accepts a file again once its earlier count has finished', async () => {
+      const file = fileRef(await createCbzComicFixture(root, 'queue/again.cbz', TWO_PAGE_ENTRIES), 'cbz');
+
+      service.queuePageCount(file);
+      await drained();
+
+      expect(service.queuePageCount(file)).toBe(true);
+      await drained();
+      expect(repository.updatePageCount).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses new files while the queue is full', () => {
+      const blocked = new Promise<void>(() => undefined);
+      vi.spyOn(service, 'refreshPageCount').mockReturnValue(blocked as Promise<number>);
+
+      for (let index = 0; index < MAX_QUEUED_PAGE_COUNTS; index++) {
+        expect(service.queuePageCount(fileRef(join(root, `queue/${index}.cbz`), 'cbz'))).toBe(true);
+      }
+
+      expect(service.queuePageCount(fileRef(join(root, 'queue/overflow.cbz'), 'cbz'))).toBe(false);
     });
   });
 

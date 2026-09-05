@@ -1,6 +1,19 @@
 import { Injectable } from '@nestjs/common';
 
-import { esc, fileMimeType, OPDS_MIME_ACQ, OPDS_MIME_ATOM, OPDS_MIME_NAV, OPDS_MIME_SEARCH, xmlEl, xmlLink } from './opds-xml.helpers';
+import {
+  esc,
+  fileMimeType,
+  OPDS_MIME_ACQ,
+  OPDS_MIME_ATOM,
+  OPDS_MIME_NAV,
+  OPDS_MIME_SEARCH,
+  OPDS_PSE_NAMESPACE,
+  OPDS_PSE_STREAM_REL,
+  OPDS_PSE_STREAM_TYPE,
+  toRfc3339Seconds,
+  xmlEl,
+  xmlLink,
+} from './opds-xml.helpers';
 import type { OpdsBookEntry } from './opds-book.service';
 
 const BASE = '/api/v1/opds';
@@ -206,8 +219,28 @@ export class OpdsService {
       );
     }
 
+    const streamLink = this.pageStreamLink(book);
+    if (streamLink) lines.push(`  ${streamLink}`);
+
     lines.push('</entry>');
     return lines.join('\n');
+  }
+
+  // Page streaming clients substitute {pageNumber} and {maxWidth} themselves, so both
+  // placeholders must reach the feed exactly as written.
+  private pageStreamLink(book: OpdsBookEntry): string | null {
+    const comicFile = book.comicFile;
+    if (!comicFile || comicFile.pageCount === null || comicFile.pageCount <= 0) return null;
+
+    const attributes: Record<string, string> = { 'pse:count': String(comicFile.pageCount) };
+    const lastRead = book.progress?.pageNumber;
+    if (book.progress && lastRead && lastRead > 0) {
+      attributes['pse:lastRead'] = String(Math.min(lastRead, comicFile.pageCount));
+      attributes['pse:lastReadDate'] = toRfc3339Seconds(book.progress.lastReadAt);
+    }
+
+    const href = `${BASE}/${book.id}/pages/{pageNumber}?fileId=${comicFile.id}&maxWidth={maxWidth}`;
+    return xmlLink(OPDS_PSE_STREAM_REL, href, OPDS_PSE_STREAM_TYPE, undefined, attributes);
   }
 
   // Both links are needed. Compliant clients follow the OpenSearch description; Moon+ Reader
@@ -235,7 +268,8 @@ export class OpdsService {
       '<feed xmlns="http://www.w3.org/2005/Atom"',
       '      xmlns:dc="http://purl.org/dc/terms/"',
       '      xmlns:opds="http://opds-spec.org/2010/catalog"',
-      '      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">',
+      '      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"',
+      `      xmlns:pse="${OPDS_PSE_NAMESPACE}">`,
       `  ${xmlEl('title', title)}`,
       `  ${xmlEl('id', id)}`,
       `  ${xmlEl('updated', updated)}`,

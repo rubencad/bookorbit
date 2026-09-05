@@ -5,6 +5,7 @@ import { MODULE_METADATA } from '@nestjs/common/constants';
 import { CommonModule } from '../../common/common.module';
 import { AppSettingsModule } from '../app-settings/app-settings.module';
 import { BookModule } from '../book/book.module';
+import { ComicPagesModule } from '../comic-pages/comic-pages.module';
 import { UserModule } from '../user/user.module';
 import { OpdsAuthGuard } from './opds-auth.guard';
 import { OpdsBookService } from './opds-book.service';
@@ -17,7 +18,13 @@ import { OpdsUserService } from './opds-user.service';
 
 describe('OpdsModule', () => {
   it('registers expected module wiring', () => {
-    expect(Reflect.getMetadata(MODULE_METADATA.IMPORTS, OpdsModule)).toEqual([AppSettingsModule, BookModule, UserModule, CommonModule]);
+    expect(Reflect.getMetadata(MODULE_METADATA.IMPORTS, OpdsModule)).toEqual([
+      AppSettingsModule,
+      BookModule,
+      UserModule,
+      CommonModule,
+      ComicPagesModule,
+    ]);
     expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, OpdsModule)).toEqual([OpdsController, OpdsUserController]);
     expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, OpdsModule)).toEqual([
       OpdsService,

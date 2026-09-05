@@ -26,14 +26,22 @@ export function xmlEl(tag: string, text: string | null | undefined): string {
   return `<${tag}>${esc(text)}</${tag}>`;
 }
 
-export function xmlLink(rel: string, href: string, type: string, title?: string): string {
+export function xmlLink(rel: string, href: string, type: string, title?: string, attributes: Record<string, string> = {}): string {
   const t = title ? ` title="${esc(title)}"` : '';
-  return `<link rel="${esc(rel)}" href="${esc(href)}" type="${esc(type)}"${t}/>`;
+  const extra = Object.entries(attributes)
+    .map(([name, value]) => ` ${name}="${esc(value)}"`)
+    .join('');
+  return `<link rel="${esc(rel)}" href="${esc(href)}" type="${esc(type)}"${t}${extra}/>`;
+}
+
+export function toRfc3339Seconds(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
 export function fileMimeType(format: string): string {
   switch (format.toLowerCase()) {
     case 'epub':
+    case 'kepub':
       return 'application/epub+zip';
     case 'pdf':
       return 'application/pdf';
@@ -47,10 +55,16 @@ export function fileMimeType(format: string): string {
       return 'application/vnd.comicbook+zip';
     case 'cbr':
       return 'application/vnd.comicbook-rar';
+    case 'cb7':
+      return 'application/x-7z-compressed';
     default:
       return 'application/octet-stream';
   }
 }
+
+export const OPDS_PSE_NAMESPACE = 'http://vaemendis.net/opds-pse/ns';
+export const OPDS_PSE_STREAM_REL = 'http://vaemendis.net/opds-pse/stream';
+export const OPDS_PSE_STREAM_TYPE = 'image/jpeg';
 
 export const OPDS_MIME_NAV = 'application/atom+xml;profile=opds-catalog;kind=navigation';
 export const OPDS_MIME_ACQ = 'application/atom+xml;profile=opds-catalog;kind=acquisition';

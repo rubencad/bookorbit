@@ -47,6 +47,7 @@ export interface ComicPageCountBackfill {
 }
 
 export const MAX_EXTRACTED_PAGE_BYTES = 64 * 1024 * 1024;
+export const MAX_QUEUED_PAGE_COUNTS = 500;
 
 const MANIFEST_CACHE_SCOPE = 'manifest';
 const MANIFEST_CACHE_TTL_MS = 15 * 60 * 1000;
@@ -97,6 +98,9 @@ function applyTransform(source: NodeJS.ReadableStream, mimeType: string, transfo
 export class ComicPageService {
   private readonly logger = new Logger(ComicPageService.name);
   private readonly manifests = new StatsCache({ ttlMs: MANIFEST_CACHE_TTL_MS, maxEntries: MANIFEST_CACHE_MAX_ENTRIES });
+  private readonly queuedFileIds = new Set<number>();
+  private readonly queuedFiles: ComicFileRef[] = [];
+  private draining = false;
 
   constructor(private readonly repository: ComicPageRepository) {}
 
@@ -155,6 +159,42 @@ export class ComicPageService {
       );
     }
     return result;
+  }
+
+  queuePageCount(file: ComicFileRef): boolean {
+    if (this.queuedFileIds.has(file.id) || this.queuedFileIds.size >= MAX_QUEUED_PAGE_COUNTS) return false;
+    this.queuedFileIds.add(file.id);
+    this.queuedFiles.push(file);
+    void this.drainQueuedPageCounts();
+    return true;
+  }
+
+  private async drainQueuedPageCounts(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    const startedAt = Date.now();
+    let counted = 0;
+    let failed = 0;
+    try {
+      for (let file = this.queuedFiles.shift(); file; file = this.queuedFiles.shift()) {
+        try {
+          await this.refreshPageCount(file);
+          counted++;
+        } catch (error) {
+          failed++;
+          this.logger.warn(
+            `[comic.page_count_queue] [fail] fileId=${file.id} errorClass=${errorClass(error)} error="${errorMessage(error)}" - queued comic page count failed`,
+          );
+        } finally {
+          this.queuedFileIds.delete(file.id);
+        }
+      }
+    } finally {
+      this.draining = false;
+    }
+    this.logger.log(
+      `[comic.page_count_queue] [end] counted=${counted} failed=${failed} durationMs=${Date.now() - startedAt} - queued comic page counts completed`,
+    );
   }
 
   async streamPage(file: ComicFileRef, pageIndex: number, transform: ComicPageTransform = {}): Promise<ComicPageStream> {
