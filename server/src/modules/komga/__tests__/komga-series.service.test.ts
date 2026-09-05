@@ -87,4 +87,11 @@ describe('KomgaSeriesService', () => {
     expect(page.pageable.unpaged).toBe(true);
     expect(page.totalElements).toBe(2);
   });
+
+  it('picks the lowest numbered book for the thumbnail and 404s when there is none', async () => {
+    const { service, repository } = makeService();
+    await expect(service.thumbnailBookId(USER, ACCOUNT, '2-s9')).resolves.toBe(10);
+    repository.aggregateSeries.mockResolvedValue(new Map([['2-s9', { ...AGGREGATE, lowestBookId: null }]]));
+    await expect(service.thumbnailBookId(USER, ACCOUNT, '2-s9')).rejects.toThrow(NotFoundException);
+  });
 });

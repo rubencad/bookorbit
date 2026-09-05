@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 
 import { CommonModule } from '../../common/common.module';
 import { AppSettingsModule } from '../app-settings/app-settings.module';
+import { BookModule } from '../book/book.module';
+import { ComicPagesModule } from '../comic-pages/comic-pages.module';
 import { UserModule } from '../user/user.module';
 import { KomgaAuthGuard } from './komga-auth.guard';
 import { KomgaBookController } from './komga-book.controller';
@@ -17,12 +19,13 @@ import { KomgaReferentialController } from './komga-referential.controller';
 import { KomgaReferentialService } from './komga-referential.service';
 import { KomgaSeriesController } from './komga-series.controller';
 import { KomgaSeriesService } from './komga-series.service';
+import { KomgaThumbnailService } from './komga-thumbnail.service';
 import { KomgaUserController } from './komga-user.controller';
 import { KomgaUserRepository } from './komga-user.repository';
 import { KomgaUserService } from './komga-user.service';
 
 @Module({
-  imports: [AppSettingsModule, UserModule, CommonModule],
+  imports: [AppSettingsModule, BookModule, UserModule, CommonModule, ComicPagesModule],
   controllers: [
     KomgaUserController,
     KomgaMeController,
@@ -43,6 +46,7 @@ import { KomgaUserService } from './komga-user.service';
     KomgaBookService,
     KomgaSeriesService,
     KomgaReferentialService,
+    KomgaThumbnailService,
   ],
 })
 export class KomgaModule {}

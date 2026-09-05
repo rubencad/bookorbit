@@ -1,19 +1,32 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { basename } from 'path';
 
 import { isComicContainerFormat } from '../../common/comic-format-detect';
 import type { RequestUser } from '../../common/types/request-user';
+import { ComicPageService, type ComicFileRef, type ComicPageStream } from '../comic-pages/comic-page.service';
+import type { ComicPageEntry } from '../comic-pages/lib/comic-page-entry';
+import { BookService } from '../book/book.service';
 import type { KomgaRequestAccount } from './komga-auth.guard';
 import { KOMGA_BOOK_SORT_PROPERTIES, KomgaCatalogRepository, type KomgaBookRow, type KomgaComicCreditsRow } from './komga-catalog.repository';
 import type { KomgaAuthorRef, KomgaBookFileRecord, KomgaBookRecord, KomgaBookSeriesContext, KomgaScope } from './komga-catalog.types';
 import { formatSeriesId, type KomgaSeriesKey } from './komga-ids';
 import { KomgaLibraryService } from './komga-library.service';
 import { buildKomgaPage, resolvePageRequest, type KomgaPage } from './komga-page-response';
-import type { BookListQuery } from './komga-query';
+import type { BookListQuery, PageImageQuery } from './komga-query';
 import { isKomgaVisibleNonComicFormat, toKomgaBookDto } from './komga.mapper';
 import { KOMGA_UNKNOWN_SERIES_TITLE } from './komga.constants';
 
 export type KomgaBookDto = ReturnType<typeof toKomgaBookDto>;
+
+export interface KomgaBookFile {
+  bookId: number;
+  file: KomgaBookFileRecord;
+}
+
+export interface KomgaPageImage {
+  stream: ComicPageStream;
+  etag: string;
+}
 
 const CREDIT_ROLES: ReadonlyArray<{ field: keyof Omit<KomgaComicCreditsRow, 'bookId'>; role: KomgaAuthorRef['role'] }> = [
   { field: 'pencillers', role: 'penciller' },
@@ -47,6 +60,8 @@ export class KomgaBookService {
   constructor(
     private readonly repository: KomgaCatalogRepository,
     private readonly libraryService: KomgaLibraryService,
+    private readonly comicPageService: ComicPageService,
+    private readonly bookService: BookService,
   ) {}
 
   async list(user: RequestUser, account: KomgaRequestAccount, query: BookListQuery): Promise<KomgaPage<KomgaBookDto>> {
@@ -71,6 +86,49 @@ export class KomgaBookService {
     const [record] = await this.buildRecords(scope, [await this.requireVisibleBook(scope, bookId)]);
     if (!record) throw new NotFoundException('Book not found');
     return toKomgaBookDto(record);
+  }
+
+  async listPages(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<ComicPageEntry[]> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    const { file } = await this.resolveFile(scope, bookId);
+    if (!isComicContainerFormat(file.format)) return [];
+    const manifest = await this.comicPageService.getManifest(this.toComicFileRef(file));
+    return manifest.pages;
+  }
+
+  async streamPage(
+    user: RequestUser,
+    account: KomgaRequestAccount,
+    bookId: number,
+    pageNumber: number,
+    query: PageImageQuery,
+  ): Promise<KomgaPageImage> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    const { file } = await this.resolveFile(scope, bookId);
+    if (!isComicContainerFormat(file.format)) throw new BadRequestException('Book has no pages to stream');
+
+    const pageIndex = query.zero_based ? pageNumber : pageNumber - 1;
+    const ref = this.toComicFileRef(file);
+    const manifest = await this.comicPageService.getManifest(ref);
+    const page = pageIndex >= 0 ? manifest.pages[pageIndex] : undefined;
+    if (!page) throw new BadRequestException(`Page ${pageNumber} is out of range`);
+
+    const convert = query.convert && query.convert !== page.mimeType.replace('image/', '') ? query.convert : undefined;
+    const stream = await this.comicPageService.streamPage(ref, pageIndex, { convert });
+    const etag = `"${file.id}-${file.mtime?.getTime() ?? file.updatedAt.getTime()}-${pageIndex}-${convert ?? 'native'}"`;
+    return { stream, etag };
+  }
+
+  async requireVisibleBookId(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<number> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    return this.requireVisibleBook(scope, bookId);
+  }
+
+  async resolveDownload(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<{ file: KomgaBookFileRecord; filename: string }> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    const { file } = await this.resolveFile(scope, bookId);
+    const filename = await this.bookService.resolveDownloadFilename({ bookId, absolutePath: file.absolutePath, format: file.format });
+    return { file, filename };
   }
 
   async buildRecords(scope: KomgaScope, bookIds: number[], context?: KomgaSeriesKey): Promise<KomgaBookRecord[]> {
@@ -160,5 +218,15 @@ export class KomgaBookService {
     const visible = await this.repository.findVisibleBookId(scope, bookId);
     if (visible === null) throw new NotFoundException('Book not found');
     return visible;
+  }
+
+  private async resolveFile(scope: KomgaScope, bookId: number): Promise<KomgaBookFile> {
+    const [record] = await this.buildRecords(scope, [await this.requireVisibleBook(scope, bookId)]);
+    if (!record) throw new NotFoundException('Book not found');
+    return { bookId, file: record.file };
+  }
+
+  private toComicFileRef(file: KomgaBookFileRecord): ComicFileRef {
+    return { id: file.id, absolutePath: file.absolutePath, format: file.format, pageCount: file.pageCount, pageMediaType: file.pageMediaType };
   }
 }

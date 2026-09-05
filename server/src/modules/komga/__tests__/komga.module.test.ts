@@ -4,6 +4,8 @@ import { MODULE_METADATA } from '@nestjs/common/constants';
 
 import { CommonModule } from '../../../common/common.module';
 import { AppSettingsModule } from '../../app-settings/app-settings.module';
+import { BookModule } from '../../book/book.module';
+import { ComicPagesModule } from '../../comic-pages/comic-pages.module';
 import { UserModule } from '../../user/user.module';
 import { KomgaAuthGuard } from '../komga-auth.guard';
 import { KomgaBookController } from '../komga-book.controller';
@@ -19,6 +21,7 @@ import { KomgaReferentialController } from '../komga-referential.controller';
 import { KomgaReferentialService } from '../komga-referential.service';
 import { KomgaSeriesController } from '../komga-series.controller';
 import { KomgaSeriesService } from '../komga-series.service';
+import { KomgaThumbnailService } from '../komga-thumbnail.service';
 import { KomgaUserController } from '../komga-user.controller';
 import { KomgaUserRepository } from '../komga-user.repository';
 import { KomgaUserService } from '../komga-user.service';
@@ -26,7 +29,13 @@ import { KomgaModule } from '../komga.module';
 
 describe('KomgaModule', () => {
   it('registers the module wiring', () => {
-    expect(Reflect.getMetadata(MODULE_METADATA.IMPORTS, KomgaModule)).toEqual([AppSettingsModule, UserModule, CommonModule]);
+    expect(Reflect.getMetadata(MODULE_METADATA.IMPORTS, KomgaModule)).toEqual([
+      AppSettingsModule,
+      BookModule,
+      UserModule,
+      CommonModule,
+      ComicPagesModule,
+    ]);
     expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, KomgaModule)).toEqual([
       KomgaUserController,
       KomgaMeController,
@@ -47,6 +56,7 @@ describe('KomgaModule', () => {
       KomgaBookService,
       KomgaSeriesService,
       KomgaReferentialService,
+      KomgaThumbnailService,
     ]);
   });
 });

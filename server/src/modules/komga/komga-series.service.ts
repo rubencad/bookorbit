@@ -84,6 +84,15 @@ export class KomgaSeriesService {
     return buildKomgaPage(records.map(toKomgaBookDto), page, total);
   }
 
+  async thumbnailBookId(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<number> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    const series = await this.requireSeries(scope, seriesId);
+    const aggregates = await this.repository.aggregateSeries(scope, [series.key]);
+    const bookId = aggregates.get(formatSeriesId(series.key))?.lowestBookId ?? null;
+    if (bookId === null) throw new NotFoundException('No thumbnail');
+    return bookId;
+  }
+
   private async requireSeries(scope: KomgaScope, seriesId: string): Promise<KomgaSeriesRecord> {
     const key = parseSeriesId(seriesId);
     if (!key) throw new NotFoundException('Series not found');

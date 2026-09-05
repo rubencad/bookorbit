@@ -1,3 +1,5 @@
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+
 import type { RequestUser } from '../../../common/types/request-user';
 import type { KomgaRequestAccount } from '../komga-auth.guard';
 import { KomgaBookService, pickKomgaFile } from '../komga-book.service';
@@ -65,8 +67,20 @@ function makeService(hydrated: KomgaBookHydration, numbering = new Map()) {
     listBooks: vi.fn().mockResolvedValue({ bookIds: [10], total: 1 }),
   };
   const libraryService = { resolveScope: vi.fn().mockResolvedValue(SCOPE) };
-  const service = new KomgaBookService(repository as never, libraryService as never);
-  return { service, repository, libraryService };
+  const comicPageService = {
+    getManifest: vi.fn().mockResolvedValue({
+      format: 'cbz',
+      pageMediaType: 'image/*',
+      pages: [
+        { index: 0, entryName: 'p/001.png', mimeType: 'image/png', sizeBytes: 1 },
+        { index: 1, entryName: 'p/002.jpg', mimeType: 'image/jpeg', sizeBytes: 2 },
+      ],
+    }),
+    streamPage: vi.fn().mockResolvedValue({ stream: { kind: 'stream' }, mimeType: 'image/jpeg' }),
+  };
+  const bookService = { resolveDownloadFilename: vi.fn().mockResolvedValue('Alpha.cbz') };
+  const service = new KomgaBookService(repository as never, libraryService as never, comicPageService as never, bookService as never);
+  return { service, repository, comicPageService, libraryService, bookService };
 }
 
 describe('pickKomgaFile', () => {
@@ -210,6 +224,15 @@ describe('KomgaBookService', () => {
       expect(page.totalElements).toBe(1);
       expect(page.content[0]).toMatchObject({ id: '10', name: 'Alpha' });
       expect(repository.listBooks).toHaveBeenCalledWith(SCOPE, expect.objectContaining({ search: 'alpha' }), expect.objectContaining({ size: 10 }));
+    });
+
+    it('resolves the download file and its filename', async () => {
+      const { service, bookService } = makeService(hydration({ books: [row()], files: new Map([[10, [file()]]]) }));
+      await expect(service.resolveDownload(USER, ACCOUNT, 10)).resolves.toEqual({
+        file: expect.objectContaining({ id: 100 }),
+        filename: 'Alpha.cbz',
+      });
+      expect(bookService.resolveDownloadFilename).toHaveBeenCalledWith({ bookId: 10, absolutePath: '/books/a.cbz', format: 'cbz' });
     });
   });
 });
