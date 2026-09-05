@@ -2,6 +2,7 @@ import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@ne
 import type { ConfigService } from '@nestjs/config';
 import { Permission } from '@bookorbit/types';
 
+import { BasicCredentialCache } from '../../../common/auth/basic-credential-cache';
 import { createCoverToken, OpdsAuthGuard } from '../opds-auth.guard';
 import type { OpdsRequestUser } from '../opds-auth.guard';
 import type { OpdsUserService } from '../opds-user.service';
@@ -52,11 +53,12 @@ const FULL_USER = {
   permissions: [Permission.OpdsAccess],
 };
 
-function makeGuard(overrides: { validateResult?: unknown; fullUser?: unknown; userHas?: boolean } = {}) {
+function makeGuard(overrides: { validateResult?: unknown; fullUser?: unknown; userHas?: boolean; credentialCache?: BasicCredentialCache } = {}) {
   const opdsUserService = {
     validateCredentials: vi
       .fn()
       .mockResolvedValue(overrides.validateResult !== undefined ? overrides.validateResult : { opdsUser: OPDS_USER, parentUser: PARENT_USER }),
+    findById: vi.fn().mockResolvedValue(OPDS_USER),
   };
   const userService = {
     findByIdWithPermissions: vi.fn().mockResolvedValue(overrides.fullUser !== undefined ? overrides.fullUser : FULL_USER),
@@ -65,12 +67,14 @@ function makeGuard(overrides: { validateResult?: unknown; fullUser?: unknown; us
     userHas: vi.fn().mockReturnValue(overrides.userHas !== undefined ? overrides.userHas : true),
   };
   const configService = { get: vi.fn().mockReturnValue(TEST_SECRET) };
-  return new OpdsAuthGuard(
+  const guard = new OpdsAuthGuard(
     opdsUserService as unknown as OpdsUserService,
     userService as unknown as UserService,
     permissionService as unknown as PermissionService,
     configService as unknown as ConfigService,
+    overrides.credentialCache ?? new BasicCredentialCache(),
   );
+  return Object.assign(guard, { mocks: { opdsUserService, userService } });
 }
 
 function basicHeader(user: string, pass: string) {
@@ -108,9 +112,9 @@ describe('OpdsAuthGuard', () => {
   });
 
   it('returns 401 when parent user is inactive', async () => {
-    const guard = makeGuard({ validateResult: { opdsUser: OPDS_USER, parentUser: { ...PARENT_USER, active: false } } });
+    const guard = makeGuard({ fullUser: { ...FULL_USER, active: false } });
     const { context } = mockContext(basicHeader('reader', 'pass'));
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(new UnauthorizedException('Account is disabled'));
   });
 
   it('returns 401 when parent user not found via findByIdWithPermissions', async () => {
@@ -169,7 +173,65 @@ describe('OpdsAuthGuard', () => {
     const guard = makeGuard();
     const { context } = mockContext(basicHeader('reader', 'pa:ss:word'));
     await guard.canActivate(context);
-    const svc = (guard as unknown as { opdsUserService: { validateCredentials: vi.Mock } }).opdsUserService;
-    expect(svc.validateCredentials).toHaveBeenCalledWith('reader', 'pa:ss:word');
+    expect(guard.mocks.opdsUserService.validateCredentials).toHaveBeenCalledWith('reader', 'pa:ss:word');
+  });
+
+  describe('credential cache', () => {
+    it('verifies the password once and reloads the account by id for repeated requests', async () => {
+      const guard = makeGuard();
+
+      await guard.canActivate(mockContext(basicHeader('reader', 'pass')).context);
+      const { context, request } = mockContext(basicHeader('reader', 'pass'));
+      await guard.canActivate(context);
+
+      expect(guard.mocks.opdsUserService.validateCredentials).toHaveBeenCalledTimes(1);
+      expect(guard.mocks.opdsUserService.findById).toHaveBeenCalledWith(OPDS_USER.id);
+      expect(guard.mocks.userService.findByIdWithPermissions).toHaveBeenCalledTimes(2);
+      expect((request.opdsUser as OpdsRequestUser).opdsUserId).toBe(OPDS_USER.id);
+    });
+
+    it('verifies a different password against the database even when the username is cached', async () => {
+      const guard = makeGuard();
+
+      await guard.canActivate(mockContext(basicHeader('reader', 'pass')).context);
+      guard.mocks.opdsUserService.validateCredentials.mockResolvedValueOnce(null);
+
+      await expect(guard.canActivate(mockContext(basicHeader('reader', 'other')).context)).rejects.toThrow(UnauthorizedException);
+      expect(guard.mocks.opdsUserService.validateCredentials).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects cached credentials whose account no longer exists', async () => {
+      const guard = makeGuard();
+
+      await guard.canActivate(mockContext(basicHeader('reader', 'pass')).context);
+      guard.mocks.opdsUserService.findById.mockResolvedValue(null);
+      guard.mocks.opdsUserService.validateCredentials.mockResolvedValue(null);
+
+      await expect(guard.canActivate(mockContext(basicHeader('reader', 'pass')).context)).rejects.toThrow(
+        new UnauthorizedException('Invalid credentials'),
+      );
+      expect(guard.mocks.opdsUserService.validateCredentials).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-checks the parent account state on every cached request', async () => {
+      const guard = makeGuard();
+
+      await guard.canActivate(mockContext(basicHeader('reader', 'pass')).context);
+      guard.mocks.userService.findByIdWithPermissions.mockResolvedValue({ ...FULL_USER, active: false });
+
+      await expect(guard.canActivate(mockContext(basicHeader('reader', 'pass')).context)).rejects.toThrow(
+        new UnauthorizedException('Account is disabled'),
+      );
+    });
+
+    it('does not reuse a credential cached for another realm', async () => {
+      const credentialCache = new BasicCredentialCache();
+      credentialCache.set('bookorbit Komga', 'reader', 'pass', { accountId: OPDS_USER.id, userId: 1 });
+      const guard = makeGuard({ credentialCache });
+
+      await guard.canActivate(mockContext(basicHeader('reader', 'pass')).context);
+
+      expect(guard.mocks.opdsUserService.validateCredentials).toHaveBeenCalledTimes(1);
+    });
   });
 });

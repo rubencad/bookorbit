@@ -3,10 +3,12 @@ import { compare, hash } from 'bcryptjs';
 import { and, eq } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
+import { BasicCredentialCache } from '../../common/auth/basic-credential-cache';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { CreateOpdsUserDto } from './dto/create-opds-user.dto';
 import { UpdateOpdsUserDto } from './dto/update-opds-user.dto';
+import { OPDS_BASIC_REALM } from './opds.constants';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -23,7 +25,10 @@ function isUniqueViolation(error: unknown): boolean {
 
 @Injectable()
 export class OpdsUserService {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly credentialCache: BasicCredentialCache,
+  ) {}
 
   findAllForUser(userId: number) {
     return this.db
@@ -82,6 +87,14 @@ export class OpdsUserService {
   async delete(userId: number, opdsUserId: number) {
     await this.verifyOwnership(userId, opdsUserId);
     await this.db.delete(schema.opdsUsers).where(eq(schema.opdsUsers.id, opdsUserId));
+    this.credentialCache.invalidateAccount(OPDS_BASIC_REALM, opdsUserId);
+  }
+
+  async findById(opdsUserId: number) {
+    const opdsUser = await this.db.query.opdsUsers.findFirst({
+      where: eq(schema.opdsUsers.id, opdsUserId),
+    });
+    return opdsUser ?? null;
   }
 
   async validateCredentials(username: string, password: string) {

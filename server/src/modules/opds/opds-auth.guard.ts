@@ -6,9 +6,15 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { Permission } from '@bookorbit/types';
 import type { ContentFilterRules } from '@bookorbit/types';
+import { BasicCredentialCache } from '../../common/auth/basic-credential-cache';
 import { PermissionService } from '../../common/services/permission.service';
+import type * as schema from '../../db/schema';
+import { OPDS_BASIC_REALM } from './opds.constants';
 import { OpdsUserService } from './opds-user.service';
 import { UserService } from '../user/user.service';
+
+type OpdsUserRow = typeof schema.opdsUsers.$inferSelect;
+const BASIC_CHALLENGE = `Basic realm="${OPDS_BASIC_REALM}"`;
 
 export interface OpdsRequestUser {
   opdsUserId: number;
@@ -56,6 +62,7 @@ export class OpdsAuthGuard implements CanActivate {
     private readonly userService: UserService,
     private readonly permissionService: PermissionService,
     private readonly config: ConfigService,
+    private readonly credentialCache: BasicCredentialCache,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -67,7 +74,7 @@ export class OpdsAuthGuard implements CanActivate {
     if (tokenParam) {
       const requestPath = stripQuery(request.url ?? '');
       if (!isTokenImagePath(requestPath)) {
-        reply.header('WWW-Authenticate', 'Basic realm="bookorbit OPDS"');
+        reply.header('WWW-Authenticate', BASIC_CHALLENGE);
         throw new UnauthorizedException('Basic authentication required');
       }
 
@@ -94,33 +101,33 @@ export class OpdsAuthGuard implements CanActivate {
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Basic ')) {
-      reply.header('WWW-Authenticate', 'Basic realm="bookorbit OPDS"');
+      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
       throw new UnauthorizedException('Basic authentication required');
     }
 
     const decoded = Buffer.from(authHeader.slice(6), 'base64').toString();
     const colonIndex = decoded.indexOf(':');
     if (colonIndex === -1) {
-      reply.header('WWW-Authenticate', 'Basic realm="bookorbit OPDS"');
+      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
       throw new UnauthorizedException('Invalid credentials');
     }
 
     const username = decoded.slice(0, colonIndex);
     const password = decoded.slice(colonIndex + 1);
 
-    const result = await this.opdsUserService.validateCredentials(username, password);
-    if (!result) {
-      reply.header('WWW-Authenticate', 'Basic realm="bookorbit OPDS"');
+    const opdsUser = await this.resolveOpdsUser(username, password);
+    if (!opdsUser) {
+      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    if (!result.parentUser.active) {
-      throw new UnauthorizedException('Account is disabled');
-    }
-
-    const fullUser = await this.userService.findByIdWithPermissions(result.parentUser.id);
+    const fullUser = await this.userService.findByIdWithPermissions(opdsUser.userId);
     if (!fullUser) {
       throw new UnauthorizedException('Account not found');
+    }
+
+    if (!fullUser.active) {
+      throw new UnauthorizedException('Account is disabled');
     }
 
     if (!this.permissionService.userHas(fullUser, Permission.OpdsAccess)) {
@@ -130,15 +137,30 @@ export class OpdsAuthGuard implements CanActivate {
     const secret = this.config.get<string>('auth.jwtSecret')!;
 
     (request as unknown as Record<string, unknown>).opdsUser = {
-      opdsUserId: result.opdsUser.id,
-      userId: result.parentUser.id,
-      username: result.opdsUser.username,
-      sortOrder: result.opdsUser.sortOrder,
+      opdsUserId: opdsUser.id,
+      userId: opdsUser.userId,
+      username: opdsUser.username,
+      sortOrder: opdsUser.sortOrder,
       isSuperuser: fullUser.isSuperuser,
-      coverToken: createCoverToken(result.parentUser.id, secret),
+      coverToken: createCoverToken(opdsUser.userId, secret),
       contentFilters: fullUser.contentFilters,
     } satisfies OpdsRequestUser;
 
     return true;
+  }
+
+  private async resolveOpdsUser(username: string, password: string): Promise<OpdsUserRow | null> {
+    const cached = this.credentialCache.get(OPDS_BASIC_REALM, username, password);
+    if (cached) {
+      const opdsUser = await this.opdsUserService.findById(cached.accountId);
+      if (opdsUser) return opdsUser;
+      this.credentialCache.invalidateAccount(OPDS_BASIC_REALM, cached.accountId);
+    }
+
+    const result = await this.opdsUserService.validateCredentials(username, password);
+    if (!result) return null;
+
+    this.credentialCache.set(OPDS_BASIC_REALM, username, password, { accountId: result.opdsUser.id, userId: result.opdsUser.userId });
+    return result.opdsUser;
   }
 }

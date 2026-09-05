@@ -6,6 +6,7 @@ vi.mock('bcryptjs', () => ({
   compare: vi.fn((plain: string, hashed: string) => Promise.resolve(hashed === `mock-hash:${plain}`)),
 }));
 
+import { BasicCredentialCache } from '../../../common/auth/basic-credential-cache';
 import { DB } from '../../../db';
 import { OpdsUserService } from '../opds-user.service';
 
@@ -42,11 +43,13 @@ function makeMockDb() {
 describe('OpdsUserService', () => {
   let service: OpdsUserService;
   let db: ReturnType<typeof makeMockDb>;
+  let credentialCache: { invalidateAccount: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     db = makeMockDb();
+    credentialCache = { invalidateAccount: vi.fn() };
     const module = await Test.createTestingModule({
-      providers: [OpdsUserService, { provide: DB, useValue: db }],
+      providers: [OpdsUserService, { provide: DB, useValue: db }, { provide: BasicCredentialCache, useValue: credentialCache }],
     }).compile();
     service = module.get(OpdsUserService);
   });
@@ -136,16 +139,33 @@ describe('OpdsUserService', () => {
   });
 
   describe('delete', () => {
-    it('deletes an owned OPDS user', async () => {
+    it('deletes an owned OPDS user and forgets its cached credentials', async () => {
       db.query.opdsUsers.findFirst.mockResolvedValue({ id: 10, userId: 5 });
 
       await expect(service.delete(5, 10)).resolves.toBeUndefined();
+      expect(credentialCache.invalidateAccount).toHaveBeenCalledWith('bookorbit OPDS', 10);
     });
 
     it('throws ForbiddenException when user does not own the OPDS user', async () => {
       db.query.opdsUsers.findFirst.mockResolvedValue(undefined);
 
       await expect(service.delete(5, 10)).rejects.toThrow(ForbiddenException);
+      expect(credentialCache.invalidateAccount).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findById', () => {
+    it('returns the OPDS user row', async () => {
+      const row = { id: 10, userId: 5, username: 'reader', sortOrder: 'recent' };
+      db.query.opdsUsers.findFirst.mockResolvedValue(row);
+
+      await expect(service.findById(10)).resolves.toEqual(row);
+    });
+
+    it('returns null for an unknown id', async () => {
+      db.query.opdsUsers.findFirst.mockResolvedValue(undefined);
+
+      await expect(service.findById(10)).resolves.toBeNull();
     });
   });
 
