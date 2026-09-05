@@ -565,6 +565,27 @@ describe('AppSettingsService', () => {
       expect(repo.findByKey).toHaveBeenCalledTimes(2);
     });
 
+    it('reports the Komga API as disabled until the setting is turned on', async () => {
+      repo.findByKey.mockResolvedValue(undefined);
+      await expect(service.isKomgaApiEnabled()).resolves.toBe(false);
+    });
+
+    it('caches Komga API reads and invalidates them when the setting is updated', async () => {
+      repo.findByKey
+        .mockResolvedValueOnce({ key: 'komga_api_enabled', value: 'true' } as never)
+        .mockResolvedValueOnce({ key: 'komga_api_enabled', value: 'false' } as never);
+      repo.updateByKey.mockResolvedValue({ key: 'komga_api_enabled', value: 'false' } as never);
+
+      await expect(service.isKomgaApiEnabled()).resolves.toBe(true);
+      await expect(service.isKomgaApiEnabled()).resolves.toBe(true);
+      expect(repo.findByKey).toHaveBeenCalledTimes(1);
+
+      await service.update('komga_api_enabled', 'false');
+
+      await expect(service.isKomgaApiEnabled()).resolves.toBe(false);
+      expect(repo.findByKey).toHaveBeenCalledTimes(2);
+    });
+
     it('upserts false when setCrossPlatformPathSanitizationEnabled is called with false', async () => {
       await service.setCrossPlatformPathSanitizationEnabled(false);
       expect(repo.upsert).toHaveBeenCalledWith('cross_platform_path_sanitization_enabled', 'false');

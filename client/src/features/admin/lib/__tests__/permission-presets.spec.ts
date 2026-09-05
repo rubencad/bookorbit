@@ -35,6 +35,7 @@ describe('permission-presets', () => {
       Permission.ReadwiseSync,
       Permission.StorygraphSync,
       Permission.OpdsAccess,
+      Permission.KomgaAccess,
     ])
     expect(presetPermissions('standard')).not.toContain(Permission.BookDockAccess)
     expect(presetPermissions('standard')).not.toContain(Permission.ManageBookDock)

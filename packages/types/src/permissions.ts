@@ -15,6 +15,7 @@ export enum Permission {
   ReadwiseSync = "readwise_sync",
   StorygraphSync = "storygraph_sync",
   OpdsAccess = "opds_access",
+  KomgaAccess = "komga_access",
 
   // Email
   EmailSend = "email_send",
@@ -51,6 +52,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   [Permission.ReadwiseSync]: "Readwise sync",
   [Permission.StorygraphSync]: "StoryGraph sync",
   [Permission.OpdsAccess]: "OPDS access",
+  [Permission.KomgaAccess]: "Komga API access",
   [Permission.EmailSend]: "Send by email",
   [Permission.ManageEmail]: "Manage email",
   [Permission.ManageLibraries]: "Manage libraries",

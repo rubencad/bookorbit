@@ -25,7 +25,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     id: 'devices',
-    use: [Permission.KoboSync, Permission.KoreaderSync, Permission.OpdsAccess],
+    use: [Permission.KoboSync, Permission.KoreaderSync, Permission.OpdsAccess, Permission.KomgaAccess],
     manage: [],
   },
   {
@@ -86,6 +86,7 @@ const STANDARD_PRESET: Permission[] = [
   Permission.ReadwiseSync,
   Permission.StorygraphSync,
   Permission.OpdsAccess,
+  Permission.KomgaAccess,
 ]
 
 export type PermissionPreset = 'standard' | 'admin' | 'clear'

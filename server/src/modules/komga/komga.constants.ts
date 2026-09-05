@@ -1,0 +1,9 @@
+export const KOMGA_BASIC_REALM = 'bookorbit Komga';
+export const KOMGA_ROLES = ['USER', 'PAGE_STREAMING', 'FILE_DOWNLOAD'] as const;
+export const KOMGA_UNKNOWN_SERIES_TITLE = 'Unknown Series';
+export const KOMGA_MAX_PAGE_SIZE = 500;
+export const KOMGA_UNPAGED_MAX_ROWS = 5_000;
+export const KOMGA_REFERENTIAL_MAX_ROWS = 2_000;
+export const KOMGA_SERIES_TERMS_MAX = 50;
+export const KOMGA_AUTHOR_ROLES = ['writer', 'penciller', 'inker', 'colorist', 'letterer', 'cover'] as const;
+export type KomgaAuthorRole = (typeof KOMGA_AUTHOR_ROLES)[number];

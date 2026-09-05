@@ -30,6 +30,7 @@ export * from "./jump-buckets";
 export * from "./reader-settings";
 export * from "./scanner";
 export * from "./opds";
+export * from "./komga";
 export * from "./kobo";
 export * from "./koreader";
 export * from "./book-dock";

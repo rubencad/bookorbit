@@ -41,6 +41,7 @@ import { KoboModule } from './modules/kobo/kobo.module';
 import { LibraryModule } from './modules/library/library.module';
 import { SmartScopeModule } from './modules/smart-scope/smart-scope.module';
 import { OpdsModule } from './modules/opds/opds.module';
+import { KomgaModule } from './modules/komga/komga.module';
 import { PathModule } from './modules/path/path.module';
 import { MetadataFetchModule } from './modules/metadata-fetch/metadata-fetch.module';
 import { MetadataPreferencesModule } from './modules/metadata-preferences/metadata-preferences.module';
@@ -134,6 +135,7 @@ import { BookMoveModule } from './modules/book-move/book-move.module';
     RecommendationModule,
     KoboModule,
     OpdsModule,
+    KomgaModule,
     BookmarkModule,
     AnnotationModule,
     DashboardModule,

@@ -31,6 +31,10 @@ import { AppSettingsRepository } from './app-settings.repository';
 
 const OIDC_TEST_TIMEOUT_MS = 10_000;
 const RUNTIME_SETTING_CACHE_TTL_MS = 30_000;
+const RUNTIME_CACHED_SETTING_KEYS: ReadonlySet<string> = new Set([
+  APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED,
+  APP_SETTING_KEYS.KOMGA_API_ENABLED,
+]);
 
 function parseSafe<T>(key: string, val: string | undefined, fallback: T, logger: Logger): T {
   if (!val) return fallback;
@@ -206,8 +210,15 @@ export class AppSettingsService {
     this.clearRuntimeSettingCache(APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED);
   }
 
+  async isKomgaApiEnabled(): Promise<boolean> {
+    return this.runtimeSettingCache.get('app-settings', APP_SETTING_KEYS.KOMGA_API_ENABLED, async () => {
+      const row = await this.repo.findByKey(APP_SETTING_KEYS.KOMGA_API_ENABLED);
+      return parseBooleanSetting(row?.value, false);
+    });
+  }
+
   private clearRuntimeSettingCache(key: string): void {
-    if (key === APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED) {
+    if (RUNTIME_CACHED_SETTING_KEYS.has(key)) {
       this.runtimeSettingCache.clearForScope('app-settings');
     }
   }
