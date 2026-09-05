@@ -9,6 +9,7 @@ import { OpdsAuthGuard } from './opds-auth.guard';
 import { OpdsBookService } from './opds-book.service';
 import { OpdsController } from './opds.controller';
 import { OpdsEnabledGuard } from './opds-enabled.guard';
+import { OpdsPageService } from './opds-page.service';
 import { OpdsService } from './opds.service';
 import { OpdsUserController } from './opds-user.controller';
 import { OpdsUserService } from './opds-user.service';
@@ -16,7 +17,7 @@ import { OpdsUserService } from './opds-user.service';
 @Module({
   imports: [AppSettingsModule, BookModule, UserModule, CommonModule, ComicPagesModule],
   controllers: [OpdsController, OpdsUserController],
-  providers: [OpdsService, OpdsBookService, OpdsUserService, OpdsAuthGuard, OpdsEnabledGuard],
+  providers: [OpdsService, OpdsBookService, OpdsPageService, OpdsUserService, OpdsAuthGuard, OpdsEnabledGuard],
   exports: [OpdsBookService],
 })
 export class OpdsModule {}

@@ -28,6 +28,7 @@ import type { OpdsRequestUser } from './opds-auth.guard';
 import { OpdsEnabledGuard } from './opds-enabled.guard';
 import { OpdsUser } from './opds-user.decorator';
 import { OpdsBookService } from './opds-book.service';
+import { OPDS_PAGE_MAX_WIDTH, OpdsPageService } from './opds-page.service';
 import { OpdsService } from './opds.service';
 import { BookService } from '../book/book.service';
 
@@ -42,6 +43,7 @@ export class OpdsController {
     private readonly opdsBookService: OpdsBookService,
     private readonly config: ConfigService,
     private readonly bookService: BookService,
+    private readonly opdsPageService: OpdsPageService,
   ) {
     this.appDataPath = this.config.get<string>('storage.appDataPath')!;
   }
@@ -288,6 +290,38 @@ export class OpdsController {
     reply.header('Content-Length', fileSize);
     reply.type(mime);
     reply.send(createReadStream(absolutePath));
+  }
+
+  @Get(':bookId/pages/:pageIndex')
+  async page(
+    @Param('bookId', ParseIntPipe) bookId: number,
+    @Param('pageIndex', ParseIntPipe) pageIndex: number,
+    @OpdsUser() user: OpdsRequestUser,
+    @Res() reply: FastifyReply,
+    @Query('fileId') fileIdStr?: string,
+    @Query('maxWidth') maxWidthStr?: string,
+    @Headers('if-none-match') ifNoneMatch?: string,
+  ) {
+    await this.opdsBookService.validateBookAccess(bookId, user.userId, user.isSuperuser, user.contentFilters);
+    const fileId = this.parseOptionalPositiveInt('fileId', fileIdStr || undefined);
+    const maxWidth = this.parseOptionalPositiveInt('maxWidth', maxWidthStr || undefined);
+    if (maxWidth !== undefined && maxWidth > OPDS_PAGE_MAX_WIDTH) {
+      throw new BadRequestException(`maxWidth must be between 1 and ${OPDS_PAGE_MAX_WIDTH}`);
+    }
+
+    const file = await this.opdsPageService.resolveComicFile(bookId, fileId);
+    const etag = file.mtime ? `"${file.id}-${file.mtime.getTime()}-${pageIndex}-${maxWidth ?? 0}"` : undefined;
+    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (etag && ifNoneMatch === etag) {
+      reply.status(304).send();
+      return;
+    }
+
+    const { stream, mimeType } = await this.opdsPageService.streamPage(file, pageIndex, maxWidth);
+    reply.header('Cache-Control', 'private, max-age=86400');
+    if (etag) reply.header('ETag', etag);
+    reply.type(mimeType);
+    reply.send(stream);
   }
 
   private sendXml(reply: FastifyReply, xml: string, mimeType: string) {

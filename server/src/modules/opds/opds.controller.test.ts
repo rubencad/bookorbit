@@ -9,7 +9,7 @@ vi.mock('fs/promises', () => ({
 
 import { createReadStream } from 'fs';
 import { readdir, stat } from 'fs/promises';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { MockedFunction } from 'vitest';
 
 import { OpdsController } from './opds.controller';
@@ -55,12 +55,17 @@ function makeController() {
   const bookService = {
     resolveDownloadFilename: vi.fn().mockResolvedValue('BadTitle - Author.epub'),
   } as never;
+  const opdsPageService = {
+    resolveComicFile: vi.fn().mockResolvedValue({ id: 7, absolutePath: '/books/saga.cbz', format: 'cbz', pageCount: 3, mtime: new Date(5_000) }),
+    streamPage: vi.fn().mockResolvedValue({ stream: { kind: 'page-stream' }, mimeType: 'image/png' }),
+  } as never;
 
   return {
-    controller: new OpdsController(opdsService, opdsBookService, config, bookService),
+    controller: new OpdsController(opdsService, opdsBookService, config, bookService, opdsPageService),
     opdsService,
     opdsBookService,
     bookService,
+    opdsPageService,
   };
 }
 
@@ -356,5 +361,75 @@ describe('OpdsController', () => {
     opdsBookService.getBookFiles.mockResolvedValue(null);
 
     await expect(controller.download(88, 77, { userId: 2, isSuperuser: false } as never, makeReply())).rejects.toThrow(NotFoundException);
+  });
+
+  describe('page streaming', () => {
+    const user = { userId: 2, isSuperuser: false, contentFilters: { rules: [] } } as never;
+
+    it('checks book access, resolves the requested file, and streams the page with cache headers', async () => {
+      const { controller, opdsBookService, opdsPageService } = makeController();
+      const reply = makeReply();
+
+      await controller.page(42, 3, user, reply, '7', '800');
+
+      expect(opdsBookService.validateBookAccess).toHaveBeenCalledWith(42, 2, false, { rules: [] });
+      expect(opdsPageService.resolveComicFile).toHaveBeenCalledWith(42, 7);
+      expect(opdsPageService.streamPage).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), 3, 800);
+      expect(reply.header).toHaveBeenCalledWith('Cross-Origin-Resource-Policy', 'cross-origin');
+      expect(reply.header).toHaveBeenCalledWith('Cache-Control', 'private, max-age=86400');
+      expect(reply.header).toHaveBeenCalledWith('ETag', '"7-5000-3-800"');
+      expect(reply.type).toHaveBeenCalledWith('image/png');
+      expect(reply.send).toHaveBeenCalledWith({ kind: 'page-stream' });
+    });
+
+    it('treats absent and empty query values as no file id and no width', async () => {
+      const { controller, opdsPageService } = makeController();
+
+      await controller.page(42, 0, user, makeReply(), '', '');
+
+      expect(opdsPageService.resolveComicFile).toHaveBeenCalledWith(42, undefined);
+      expect(opdsPageService.streamPage).toHaveBeenCalledWith(expect.anything(), 0, undefined);
+    });
+
+    it('answers 304 when the ETag matches without opening the archive', async () => {
+      const { controller, opdsPageService } = makeController();
+      const reply = makeReply();
+
+      await controller.page(42, 3, user, reply, '7', undefined, '"7-5000-3-0"');
+
+      expect(reply.status).toHaveBeenCalledWith(304);
+      expect(reply.send).toHaveBeenCalledWith();
+      expect(opdsPageService.streamPage).not.toHaveBeenCalled();
+    });
+
+    it('sends no ETag when the file modification time is unknown', async () => {
+      const { controller, opdsPageService } = makeController();
+      opdsPageService.resolveComicFile.mockResolvedValue({ id: 7, absolutePath: '/books/saga.cbz', format: 'cbz', pageCount: 3, mtime: null });
+      const reply = makeReply();
+
+      await controller.page(42, 0, user, reply, undefined, undefined, '"7-0-0-0"');
+
+      expect(reply.status).not.toHaveBeenCalledWith(304);
+      expect(reply.header).not.toHaveBeenCalledWith('ETag', expect.anything());
+      expect(reply.send).toHaveBeenCalledWith({ kind: 'page-stream' });
+    });
+
+    it('rejects widths that are not positive integers within the limit', async () => {
+      const { controller, opdsPageService } = makeController();
+
+      await expect(controller.page(42, 0, user, makeReply(), undefined, '0')).rejects.toThrow(BadRequestException);
+      await expect(controller.page(42, 0, user, makeReply(), undefined, 'wide')).rejects.toThrow(BadRequestException);
+      await expect(controller.page(42, 0, user, makeReply(), undefined, '4097')).rejects.toThrow(BadRequestException);
+      await expect(controller.page(42, 0, user, makeReply(), 'seven', undefined)).rejects.toThrow(BadRequestException);
+      expect(opdsPageService.resolveComicFile).not.toHaveBeenCalled();
+    });
+
+    it('does not resolve files for books the reader cannot access', async () => {
+      const { controller, opdsBookService, opdsPageService } = makeController();
+      opdsBookService.validateBookAccess.mockRejectedValue(new ForbiddenException('No access to this book'));
+
+      await expect(controller.page(42, 0, user, makeReply())).rejects.toThrow(ForbiddenException);
+      expect(opdsPageService.resolveComicFile).not.toHaveBeenCalled();
+    });
   });
 });

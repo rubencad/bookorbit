@@ -408,6 +408,18 @@
     "useGuards": ["OpdsEnabledGuard, OpdsAuthGuard"]
   },
   {
+    "file": "server/src/modules/opds/opds.controller.ts",
+    "className": "OpdsController",
+    "methodName": "page",
+    "httpMethod": "GET",
+    "path": "/opds/:bookId/pages/:pageIndex",
+    "permissions": [],
+    "libraryAccess": [],
+    "isPublic": true,
+    "allowDefault": false,
+    "useGuards": ["OpdsEnabledGuard, OpdsAuthGuard"]
+  },
+  {
     "file": "server/src/modules/path/path.controller.ts",
     "className": "PathController",
     "methodName": "getConfig",

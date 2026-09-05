@@ -12,6 +12,7 @@ import { OpdsBookService } from './opds-book.service';
 import { OpdsController } from './opds.controller';
 import { OpdsEnabledGuard } from './opds-enabled.guard';
 import { OpdsModule } from './opds.module';
+import { OpdsPageService } from './opds-page.service';
 import { OpdsService } from './opds.service';
 import { OpdsUserController } from './opds-user.controller';
 import { OpdsUserService } from './opds-user.service';
@@ -29,6 +30,7 @@ describe('OpdsModule', () => {
     expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, OpdsModule)).toEqual([
       OpdsService,
       OpdsBookService,
+      OpdsPageService,
       OpdsUserService,
       OpdsAuthGuard,
       OpdsEnabledGuard,
