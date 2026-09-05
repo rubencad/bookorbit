@@ -60,7 +60,7 @@ Try the live instance before you install. No account required.
 
 - **Multi-User & SSO**: Granular per-user permissions and isolated reading data, with native support for Authentik, Keycloak, and Authelia via OIDC.
 - **Multilingual Interface**: Community translations are managed on [Crowdin](https://crowdin.com/project/bookorbit). See the [localization guide](docs/LOCALIZATION.md) for current language support and contributor instructions.
-- **Content Delivery**: OPDS support for compatible apps, Send-to-Kindle via email, and browser drag-and-drop uploads.
+- **Content Delivery**: OPDS support for compatible apps, including page streaming for CBZ, CBR, and CB7 comics (OPDS-PSE) in readers such as KOReader, Panels, and Chunky, plus Send-to-Kindle via email and browser drag-and-drop uploads.
 - **Automated Ingestion**: Configure a Book Dock drop folder for hands-free importing.
 
 ## Quick Start (Docker)
