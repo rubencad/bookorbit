@@ -53,14 +53,15 @@ export async function buildCb7Archive(entries: readonly ComicFixtureEntry[]): Pr
   const sevenZip = await getSevenZip();
   const stagingDirectory = `/${createSevenZipTempId('fixture')}`;
   const archivePath = `${stagingDirectory}.cb7`;
+  sevenZip.FS.mkdir(stagingDirectory);
 
   try {
-    sevenZip.FS.mkdir(stagingDirectory);
     const topLevelNames = new Set<string>();
+    const createdDirectories = new Set<string>();
     for (const entry of entries) {
       const segments = entry.path.split('/');
       topLevelNames.add(segments[0]);
-      ensureDirectories(sevenZip, stagingDirectory, segments.slice(0, -1));
+      ensureDirectories(sevenZip, stagingDirectory, segments.slice(0, -1), createdDirectories);
       const bytes = toBuffer(entry.content);
       const fd = sevenZip.FS.open(`${stagingDirectory}/${entry.path}`, 'w+');
       sevenZip.FS.write(fd, bytes, 0, bytes.length);
@@ -81,33 +82,22 @@ export async function buildCb7Archive(entries: readonly ComicFixtureEntry[]): Pr
     return Buffer.from(sevenZip.FS.readFile(archivePath));
   } finally {
     removeTree(sevenZip, stagingDirectory);
-    try {
-      sevenZip.FS.unlink(archivePath);
-    } catch {
-      // archive was never written
-    }
+    if (sevenZip.FS.readdir('/').includes(archivePath.slice(1))) sevenZip.FS.unlink(archivePath);
   }
 }
 
-function ensureDirectories(sevenZip: SevenZipModule, root: string, segments: readonly string[]): void {
+function ensureDirectories(sevenZip: SevenZipModule, root: string, segments: readonly string[], createdDirectories: Set<string>): void {
   let current = root;
   for (const segment of segments) {
     current = `${current}/${segment}`;
-    try {
-      sevenZip.FS.mkdir(current);
-    } catch {
-      // already exists
-    }
+    if (createdDirectories.has(current)) continue;
+    sevenZip.FS.mkdir(current);
+    createdDirectories.add(current);
   }
 }
 
 function removeTree(sevenZip: SevenZipModule, directory: string): void {
-  let names: string[];
-  try {
-    names = sevenZip.FS.readdir(directory).filter((name) => name !== '.' && name !== '..');
-  } catch {
-    return;
-  }
+  const names = sevenZip.FS.readdir(directory).filter((name) => name !== '.' && name !== '..');
   for (const name of names) {
     const child = `${directory}/${name}`;
     if (sevenZip.FS.isDir(sevenZip.FS.stat(child).mode)) removeTree(sevenZip, child);

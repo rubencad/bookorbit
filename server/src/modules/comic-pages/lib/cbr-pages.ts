@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createExtractorFromFile, UnrarError, type FileHeader } from 'node-unrar-js';
 
+import type { CleanupFailureReporter } from './cleanup-failure';
 import { ComicArchiveError } from './comic-archive-error';
 import { toComicPageEntries, type ComicPageEntry } from './comic-page-entry';
 
@@ -51,10 +52,14 @@ export async function listCbrPages(absolutePath: string): Promise<ComicPageEntry
   );
 }
 
-export async function extractCbrPage(absolutePath: string, page: ComicPageEntry): Promise<NodeJS.ReadableStream> {
+export async function extractCbrPage(
+  absolutePath: string,
+  page: ComicPageEntry,
+  reportCleanupFailure: CleanupFailureReporter,
+): Promise<NodeJS.ReadableStream> {
   const targetDirectory = await mkdtemp(join(tmpdir(), 'bookorbit-cbr-'));
   const removeTargetDirectory = (): void => {
-    void rm(targetDirectory, { recursive: true, force: true }).catch(() => undefined);
+    void rm(targetDirectory, { recursive: true, force: true }).catch((error: unknown) => reportCleanupFailure(targetDirectory, error));
   };
 
   try {

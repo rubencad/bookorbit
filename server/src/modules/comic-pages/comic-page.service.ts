@@ -11,6 +11,7 @@ import { ComicPageRepository } from './comic-page.repository';
 import { extractCb7Page, listCb7Pages } from './lib/cb7-pages';
 import { extractCbrPage, listCbrPages } from './lib/cbr-pages';
 import { listCbzPages, streamCbzPage } from './lib/cbz-pages';
+import type { CleanupFailureReporter } from './lib/cleanup-failure';
 import { ComicArchiveError } from './lib/comic-archive-error';
 import type { ComicPageEntry } from './lib/comic-page-entry';
 
@@ -64,10 +65,14 @@ function isMissingFilesystemEntry(error: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
-async function listPages(absolutePath: string, format: ComicContainerFormat): Promise<ComicPageEntry[]> {
+async function listPages(
+  absolutePath: string,
+  format: ComicContainerFormat,
+  reportCleanupFailure: CleanupFailureReporter,
+): Promise<ComicPageEntry[]> {
   if (format === 'cbz') return listCbzPages(absolutePath);
   if (format === 'cbr') return listCbrPages(absolutePath);
-  return listCb7Pages(absolutePath);
+  return listCb7Pages(absolutePath, reportCleanupFailure);
 }
 
 function applyTransform(source: NodeJS.ReadableStream, mimeType: string, transform: ComicPageTransform): ComicPageStream {
@@ -126,7 +131,7 @@ export class ComicPageService {
 
     const startedAt = Date.now();
     try {
-      const source = await this.openPage(file.absolutePath, manifest.format, page);
+      const source = await this.openPage(file.absolutePath, manifest.format, page, this.cleanupReporter(file));
       const durationMs = Date.now() - startedAt;
       if (durationMs > SLOW_PAGE_EXTRACTION_MS) {
         this.logger.warn(
@@ -142,20 +147,32 @@ export class ComicPageService {
     }
   }
 
-  private async openPage(absolutePath: string, format: ComicContainerFormat, page: ComicPageEntry): Promise<NodeJS.ReadableStream> {
+  private async openPage(
+    absolutePath: string,
+    format: ComicContainerFormat,
+    page: ComicPageEntry,
+    reportCleanupFailure: CleanupFailureReporter,
+  ): Promise<NodeJS.ReadableStream> {
     if (format === 'cbz') return streamCbzPage(absolutePath, page);
     if (page.sizeBytes > MAX_EXTRACTED_PAGE_BYTES) {
       throw new ComicArchiveError(`Comic page is larger than the ${MAX_EXTRACTED_PAGE_BYTES} byte extraction limit`);
     }
-    if (format === 'cbr') return extractCbrPage(absolutePath, page);
-    return Readable.from(await extractCb7Page(absolutePath, page));
+    if (format === 'cbr') return extractCbrPage(absolutePath, page, reportCleanupFailure);
+    return Readable.from(await extractCb7Page(absolutePath, page, reportCleanupFailure));
+  }
+
+  private cleanupReporter(file: ComicFileRef): CleanupFailureReporter {
+    return (resource, error) =>
+      this.logger.warn(
+        `[comic.archive_cleanup] [fail] fileId=${file.id} resource="${sanitizeLogValue(resource)}" errorClass=${errorClass(error)} error="${errorMessage(error)}" - comic archive cleanup failed`,
+      );
   }
 
   private async buildManifest(file: ComicFileRef, format: ComicContainerFormat): Promise<ComicPageManifest> {
     const startedAt = Date.now();
     try {
       const actualFormat = await detectComicContainerFormat(file.absolutePath, format);
-      const pages = await listPages(file.absolutePath, actualFormat);
+      const pages = await listPages(file.absolutePath, actualFormat, this.cleanupReporter(file));
       this.logger.debug(
         `[comic.page_manifest] [end] fileId=${file.id} format=${actualFormat} pages=${pages.length} durationMs=${Date.now() - startedAt} - comic page manifest built`,
       );
