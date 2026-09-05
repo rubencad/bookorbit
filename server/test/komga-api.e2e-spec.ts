@@ -231,6 +231,10 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
         const response = await komgaGet('/komga/api/v2/users/me', grouped);
         expect(response.statusCode).toBe(403);
         expect(response.json()).toMatchObject({ message: 'Komga API is disabled' });
+
+        const status = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga-api/status', headers: authHeader(owner.accessToken) });
+        expect(status.statusCode).toBe(200);
+        expect(status.json()).toEqual({ enabled: false });
       } finally {
         await setKomgaApiEnabled(true);
       }
@@ -662,6 +666,17 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     it('requires komga_access to manage accounts', async () => {
       const denied = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga-users', headers: authHeader(noPermissionUser.accessToken) });
       expect(denied.statusCode).toBe(403);
+
+      const deniedStatus = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/komga-api/status',
+        headers: authHeader(noPermissionUser.accessToken),
+      });
+      expect(deniedStatus.statusCode).toBe(403);
+
+      const status = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga-api/status', headers: authHeader(owner.accessToken) });
+      expect(status.statusCode).toBe(200);
+      expect(status.json()).toEqual({ enabled: true });
 
       const unauthenticated = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga-users' });
       expect(unauthenticated.statusCode).toBe(401);

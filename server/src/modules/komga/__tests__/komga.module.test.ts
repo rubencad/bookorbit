@@ -21,6 +21,7 @@ import { KomgaReferentialController } from '../komga-referential.controller';
 import { KomgaReferentialService } from '../komga-referential.service';
 import { KomgaSeriesController } from '../komga-series.controller';
 import { KomgaSeriesService } from '../komga-series.service';
+import { KomgaStatusController } from '../komga-status.controller';
 import { KomgaThumbnailService } from '../komga-thumbnail.service';
 import { KomgaUserController } from '../komga-user.controller';
 import { KomgaUserRepository } from '../komga-user.repository';
@@ -38,6 +39,7 @@ describe('KomgaModule', () => {
     ]);
     expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, KomgaModule)).toEqual([
       KomgaUserController,
+      KomgaStatusController,
       KomgaMeController,
       KomgaLibraryController,
       KomgaSeriesController,

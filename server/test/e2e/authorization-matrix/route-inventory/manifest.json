@@ -1,5 +1,5 @@
 {
-  "totalRoutes": 492,
+  "totalRoutes": 493,
   "byPermission": {
     "(none)": 203,
     "Permission.ManageMetadataConfig": 34,
@@ -28,7 +28,7 @@
     "Permission.BookRequestAccess": 25,
     "Permission.ManageBookRequests": 20,
     "Permission.BookRequestSelfFulfill": 11,
-    "Permission.KomgaAccess": 4
+    "Permission.KomgaAccess": 5
   },
   "byLibraryAccess": {
     "'viewer'": 4,

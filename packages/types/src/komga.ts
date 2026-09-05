@@ -18,3 +18,7 @@ export interface UpdateKomgaUserRequest {
   groupUnknownSeries?: boolean;
   includeNonComicBooks?: boolean;
 }
+
+export interface KomgaApiStatus {
+  enabled: boolean;
+}

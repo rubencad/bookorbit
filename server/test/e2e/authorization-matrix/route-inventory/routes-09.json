@@ -48,6 +48,18 @@
     "useGuards": []
   },
   {
+    "file": "server/src/modules/komga/komga-status.controller.ts",
+    "className": "KomgaStatusController",
+    "methodName": "status",
+    "httpMethod": "GET",
+    "path": "/komga-api/status",
+    "permissions": ["Permission.KomgaAccess"],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
+  },
+  {
     "file": "server/src/modules/komga/komga-me.controller.ts",
     "className": "KomgaMeController",
     "methodName": "meV2",

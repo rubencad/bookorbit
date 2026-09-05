@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import type { CreateKomgaUserRequest, KomgaUser, UpdateKomgaUserRequest } from '@bookorbit/types'
+import type { CreateKomgaUserRequest, KomgaApiStatus, KomgaUser, UpdateKomgaUserRequest } from '@bookorbit/types'
 import { api } from '@/lib/api'
 
 interface ApiErrorBody {
@@ -22,14 +22,14 @@ export function useKomgaSettings() {
     loading.value = true
     loadError.value = null
     try {
-      const [settingsRes, accountsRes] = await Promise.all([api('/api/v1/app-settings'), api('/api/v1/komga-users')])
-      if (settingsRes.ok) {
-        const settings = (await settingsRes.json()) as { key: string; value: string }[]
-        komgaEnabled.value = settings.find((setting) => setting.key === 'komga_api_enabled')?.value === 'true'
+      const [statusRes, accountsRes] = await Promise.all([api('/api/v1/komga-api/status'), api('/api/v1/komga-users')])
+      if (!statusRes.ok || !accountsRes.ok) {
+        loadError.value = `status ${statusRes.ok ? accountsRes.status : statusRes.status}`
+        return
       }
-      if (accountsRes.ok) {
-        accounts.value = (await accountsRes.json()) as KomgaUser[]
-      }
+      const status = (await statusRes.json()) as KomgaApiStatus
+      komgaEnabled.value = status.enabled
+      accounts.value = (await accountsRes.json()) as KomgaUser[]
     } catch (e) {
       loadError.value = e instanceof Error ? e.message : 'load_failed'
     } finally {

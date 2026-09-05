@@ -1022,6 +1022,15 @@ describe('Authorization matrix (e2e)', () => {
       }
     });
 
+    it('allows komga_access users to read status without manage_app_settings', async () => {
+      const response = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga-api/status', headers: authHeader(personas.komgaOwner.accessToken) });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ enabled: true });
+
+      const denied = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga-api/status', headers: authHeader(personas.basicUser.accessToken) });
+      expect(denied.statusCode).toBe(403);
+    });
+
     it('challenges Komga routes without Basic credentials', async () => {
       const response = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga/api/v2/users/me' });
       expectError(response, 401, 'Basic authentication required');
@@ -1073,7 +1082,7 @@ describe('Authorization matrix (e2e)', () => {
       expectError(hidden, 403, 'No access to this library');
     });
 
-    it('answers unknown Komga paths with a JSON 404 without requiring credentials', async () => {
+    it('returns JSON 404 for unknown Komga paths without authentication', async () => {
       const response = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga/api/v1/settings' });
       expect(response.statusCode).toBe(404);
       expect(response.json()).toEqual(expect.objectContaining({ status: 404, error: 'Not Found' }));

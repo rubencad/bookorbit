@@ -19,6 +19,7 @@ import { KomgaReferentialController } from './komga-referential.controller';
 import { KomgaReferentialService } from './komga-referential.service';
 import { KomgaSeriesController } from './komga-series.controller';
 import { KomgaSeriesService } from './komga-series.service';
+import { KomgaStatusController } from './komga-status.controller';
 import { KomgaThumbnailService } from './komga-thumbnail.service';
 import { KomgaUserController } from './komga-user.controller';
 import { KomgaUserRepository } from './komga-user.repository';
@@ -28,6 +29,7 @@ import { KomgaUserService } from './komga-user.service';
   imports: [AppSettingsModule, BookModule, UserModule, CommonModule, ComicPagesModule],
   controllers: [
     KomgaUserController,
+    KomgaStatusController,
     KomgaMeController,
     KomgaLibraryController,
     KomgaSeriesController,

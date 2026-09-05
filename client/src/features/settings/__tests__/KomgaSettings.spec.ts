@@ -41,7 +41,7 @@ async function mountPage(options: { enabled?: boolean; accounts?: KomgaUser[]; p
   permState.permissions = options.permissions ?? ['komga_access']
   apiMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
-    if (path === '/api/v1/app-settings') return response(true, [{ key: 'komga_api_enabled', value: String(options.enabled ?? true) }])
+    if (path === '/api/v1/komga-api/status') return response(true, { enabled: options.enabled ?? true })
     if (path === '/api/v1/komga-users' && !init?.method) return response(true, options.accounts ?? [account()])
     return response(false, { message: 'unexpected request' })
   })
@@ -67,7 +67,29 @@ describe('KomgaSettings', () => {
     expect(wrapper.find('[data-testid="komga-enabled-toggle"]').exists()).toBe(false)
   })
 
-  it('offers the server toggle only to users who manage app settings and patches the setting', async () => {
+  it('loads the enabled state from the Komga status endpoint', async () => {
+    const wrapper = await mountPage({ permissions: ['komga_access'], enabled: true })
+    expect(requestsTo('/api/v1/app-settings')).toHaveLength(0)
+    expect(requestsTo('/api/v1/komga-api/status')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Server address')
+  })
+
+  it('shows a load error when the status request fails', async () => {
+    permState.permissions = ['komga_access']
+    apiMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path === '/api/v1/komga-users') return response(true, [account()])
+      return response(false, { message: 'Forbidden' }, 403)
+    })
+    const wrapper = mount(KomgaSettings)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Failed to load Komga settings')
+    expect(wrapper.text()).not.toContain('turned off')
+    expect(wrapper.findAll('[data-testid="komga-account"]')).toHaveLength(0)
+  })
+
+  it('shows the server toggle only with manage_app_settings and updates the setting', async () => {
     const wrapper = await mountPage({ permissions: ['komga_access', 'manage_app_settings'], enabled: false })
     apiMock.mockResolvedValue(response(true, { key: 'komga_api_enabled', value: 'true' }))
 
@@ -111,7 +133,7 @@ describe('KomgaSettings', () => {
     expect(toast.success).toHaveBeenCalledWith('Komga account "mihon-phone" created')
   })
 
-  it('surfaces the server message when creation is refused', async () => {
+  it('shows the server error when account creation fails', async () => {
     const wrapper = await mountPage({ accounts: [] })
     await wrapper
       .findAll('button')
@@ -129,7 +151,7 @@ describe('KomgaSettings', () => {
     expect(wrapper.find('form').exists()).toBe(true)
   })
 
-  it('flips one account option at a time through PATCH', async () => {
+  it('updates one account option per PATCH request', async () => {
     const wrapper = await mountPage()
     apiMock.mockResolvedValueOnce(response(true, account({ groupUnknownSeries: false })))
 
