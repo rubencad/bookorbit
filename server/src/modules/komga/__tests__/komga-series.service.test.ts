@@ -1,0 +1,90 @@
+import { NotFoundException } from '@nestjs/common';
+
+import type { RequestUser } from '../../../common/types/request-user';
+import type { KomgaRequestAccount } from '../komga-auth.guard';
+import type { KomgaSeriesRecord } from '../komga-catalog.types';
+import { KomgaSeriesService } from '../komga-series.service';
+
+const USER = { id: 1 } as RequestUser;
+const ACCOUNT = { id: 3 } as KomgaRequestAccount;
+const SCOPE = { libraryIds: [2] };
+const SERIES: KomgaSeriesRecord = {
+  key: { kind: 'series', libraryId: 2, seriesId: 9 },
+  name: 'Saga',
+  booksCount: 2,
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+  updatedAt: new Date('2026-01-02T00:00:00Z'),
+  expectedBookCount: null,
+};
+const AGGREGATE = {
+  lowestBookId: 10,
+  summary: '',
+  summaryNumber: '',
+  publisher: null,
+  language: null,
+  releaseDate: null,
+  genres: [],
+  tags: [],
+  authors: [],
+};
+
+function makeService() {
+  const repository = {
+    listSeries: vi.fn().mockResolvedValue({ rows: [SERIES], total: 1 }),
+    findSeries: vi.fn().mockResolvedValue(SERIES),
+    aggregateSeries: vi.fn().mockResolvedValue(new Map([['2-s9', AGGREGATE]])),
+    listSeriesBooks: vi.fn().mockResolvedValue({ bookIds: [10, 11], total: 2 }),
+  };
+  const libraryService = { resolveScope: vi.fn().mockResolvedValue(SCOPE) };
+  const bookService = { buildRecords: vi.fn().mockResolvedValue([]) };
+  return {
+    service: new KomgaSeriesService(repository as never, libraryService as never, bookService as never),
+    repository,
+    libraryService,
+    bookService,
+  };
+}
+
+describe('KomgaSeriesService', () => {
+  it('lists series with the parsed filters and hydrated aggregates', async () => {
+    const { service, repository, libraryService } = makeService();
+    const page = await service.list(USER, ACCOUNT, { library_id: [2], search: 'sa', status: ['ONGOING'], sort: ['createdDate,desc'] });
+    expect(libraryService.resolveScope).toHaveBeenCalledWith(USER, ACCOUNT, [2]);
+    expect(repository.listSeries).toHaveBeenCalledWith(
+      SCOPE,
+      expect.objectContaining({ search: 'sa', statuses: ['ONGOING'] }),
+      expect.objectContaining({ sort: [{ property: 'createdDate', direction: 'desc' }] }),
+    );
+    expect(repository.aggregateSeries).toHaveBeenCalledWith(SCOPE, [SERIES.key]);
+    expect(page.totalElements).toBe(1);
+    expect(page.content[0]).toMatchObject({ id: '2-s9', name: 'Saga', booksCount: 2 });
+  });
+
+  it('returns an empty page for deleted=true without querying', async () => {
+    const { service, repository } = makeService();
+    await expect(service.list(USER, ACCOUNT, { deleted: true })).resolves.toMatchObject({ content: [], totalElements: 0 });
+    expect(repository.listSeries).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed and invisible series ids with 404', async () => {
+    const { service, repository } = makeService();
+    await expect(service.get(USER, ACCOUNT, 'nope')).rejects.toThrow(NotFoundException);
+    repository.findSeries.mockResolvedValue(null);
+    await expect(service.get(USER, ACCOUNT, '2-s9')).rejects.toThrow(NotFoundException);
+    await expect(service.listBooks(USER, ACCOUNT, '2-s9', {})).rejects.toThrow(NotFoundException);
+  });
+
+  it('builds series books in the context of the browsed series', async () => {
+    const { service, repository, bookService } = makeService();
+    const page = await service.listBooks(USER, ACCOUNT, '2-s9', { unpaged: true, media_status: ['READY'] });
+    expect(repository.listSeriesBooks).toHaveBeenCalledWith(
+      SCOPE,
+      SERIES.key,
+      { mediaStatuses: ['READY'], tags: undefined },
+      expect.objectContaining({ unpaged: true }),
+    );
+    expect(bookService.buildRecords).toHaveBeenCalledWith(SCOPE, [10, 11], SERIES.key);
+    expect(page.pageable.unpaged).toBe(true);
+    expect(page.totalElements).toBe(2);
+  });
+});

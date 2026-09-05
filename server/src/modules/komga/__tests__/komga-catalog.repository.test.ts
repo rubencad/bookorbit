@@ -1,0 +1,175 @@
+import { KomgaCatalogRepository } from '../komga-catalog.repository';
+import type { KomgaScope } from '../komga-catalog.types';
+
+const SCOPE: KomgaScope = {
+  userId: 1,
+  isSuperuser: true,
+  contentFilters: { includeTagIds: [], includeGenreIds: [], excludeTagIds: [], excludeGenreIds: [] },
+  includeNonComicBooks: false,
+  groupUnknownSeries: true,
+  libraryIds: [2],
+};
+const PAGE = { page: 0, size: 20, offset: 0, unpaged: false, sort: [{ property: 'metadata.titleSort', direction: 'asc' as const }] };
+
+function makeChain() {
+  const chain: Record<string, unknown> = {};
+  for (const method of ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'limit', 'offset', 'groupBy'] as const) {
+    chain[method] = vi.fn().mockReturnValue(chain);
+  }
+  return chain;
+}
+
+function makeRepository(executeResults: Array<{ rows: unknown[] }> = []) {
+  const queue = [...executeResults];
+  const db = {
+    execute: vi.fn().mockImplementation(() => Promise.resolve(queue.shift() ?? { rows: [] })),
+    select: vi.fn().mockImplementation(() => makeChain()),
+    selectDistinct: vi.fn().mockImplementation(() => makeChain()),
+  };
+  return { repository: new KomgaCatalogRepository(db as never), db };
+}
+
+describe('KomgaCatalogRepository', () => {
+  it('returns nothing for a scope without libraries instead of querying', async () => {
+    const { repository, db } = makeRepository();
+    const empty = { ...SCOPE, libraryIds: [] };
+    await expect(repository.listSeries(empty, {}, PAGE)).resolves.toEqual({ rows: [], total: 0 });
+    await expect(repository.listBooks(empty, {}, PAGE)).resolves.toEqual({ bookIds: [], total: 0 });
+    await expect(repository.listSeriesBooks(SCOPE, { kind: 'unknown', libraryId: 7 }, {}, PAGE)).resolves.toEqual({ bookIds: [], total: 0 });
+    await expect(repository.findVisibleBookId(empty, 1)).resolves.toBeNull();
+    await expect(repository.listReferentialValues(empty, 'genre')).resolves.toEqual([]);
+    await expect(repository.listReferentialAuthors(empty)).resolves.toEqual([]);
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses series keys outside the accessible libraries and contradictory status filters', async () => {
+    const { repository, db } = makeRepository();
+    await expect(repository.findSeries(SCOPE, { kind: 'series', libraryId: 9, seriesId: 1 })).resolves.toBeNull();
+    await expect(repository.listSeries(SCOPE, { statuses: ['ABANDONED'] }, PAGE)).resolves.toEqual({ rows: [], total: 0 });
+    await expect(repository.findSeries(SCOPE, { kind: 'oneshot', libraryId: 2, bookId: 5 })).resolves.toBeNull();
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  it('maps grouped rows into series records for every id shape', async () => {
+    const { repository } = makeRepository([
+      {
+        rows: [
+          {
+            library_id: 2,
+            series_id: 9,
+            book_id: null,
+            name: 'Saga',
+            books_count: 3,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-02T00:00:00Z',
+            expected_book_count: 3,
+          },
+          {
+            library_id: 2,
+            series_id: null,
+            book_id: null,
+            name: 'Unknown Series',
+            books_count: 1,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            expected_book_count: null,
+          },
+          {
+            library_id: 2,
+            series_id: null,
+            book_id: 77,
+            name: 'Standalone',
+            books_count: 1,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            expected_book_count: null,
+          },
+        ],
+      },
+      { rows: [{ total: '3' }] },
+    ]);
+    const { rows, total } = await repository.listSeries({ ...SCOPE, groupUnknownSeries: false }, {}, PAGE);
+    expect(total).toBe(3);
+    expect(rows.map((row) => row.key)).toEqual([
+      { kind: 'series', libraryId: 2, seriesId: 9 },
+      { kind: 'unknown', libraryId: 2 },
+      { kind: 'oneshot', libraryId: 2, bookId: 77 },
+    ]);
+    expect(rows[0]).toMatchObject({ name: 'Saga', booksCount: 3, expectedBookCount: 3, createdAt: new Date('2026-01-01T00:00:00Z') });
+  });
+
+  it('assembles series aggregates from the five grouped queries and leaves gaps empty', async () => {
+    const { repository, db } = makeRepository([
+      { rows: [{ key: '2-s9', book_id: 10 }] },
+      { rows: [{ key: '2-s9', description: 'Summary', series_index: '1' }] },
+      { rows: [{ key: '2-s9', release_date: '2012-03-14', publisher: 'Image', language: 'en' }] },
+      {
+        rows: [
+          { key: '2-s9', kind: 'genre', name: 'Drama' },
+          { key: '2-s9', kind: 'tag', name: 'space' },
+        ],
+      },
+      { rows: [{ key: '2-s9', name: 'Ann', role: 'writer' }] },
+    ]);
+    const aggregates = await repository.aggregateSeries(SCOPE, [
+      { kind: 'series', libraryId: 2, seriesId: 9 },
+      { kind: 'unknown', libraryId: 2 },
+    ]);
+    expect(db.execute).toHaveBeenCalledTimes(5);
+    expect(aggregates.get('2-s9')).toEqual({
+      lowestBookId: 10,
+      summary: 'Summary',
+      summaryNumber: '1',
+      publisher: 'Image',
+      language: 'en',
+      releaseDate: '2012-03-14',
+      genres: ['Drama'],
+      tags: ['space'],
+      authors: [{ name: 'Ann', role: 'writer' }],
+    });
+    expect(aggregates.get('2-u')).toEqual({
+      lowestBookId: null,
+      summary: '',
+      summaryNumber: '',
+      publisher: null,
+      language: null,
+      releaseDate: null,
+      genres: [],
+      tags: [],
+      authors: [],
+    });
+  });
+
+  it('reads numbering statistics and ordinals per series key', async () => {
+    const { repository, db } = makeRepository([
+      {
+        rows: [
+          { key: '2-s9', indexed_count: '2', max_index: '12' },
+          { key: '2-u', indexed_count: '0', max_index: null },
+        ],
+      },
+      {
+        rows: [
+          { key: '2-s9', book_id: 5, ordinal: '1' },
+          { key: '2-u', book_id: 6, ordinal: '1' },
+          { key: '2-u', book_id: 7, ordinal: '2' },
+        ],
+      },
+    ]);
+    const numbering = await repository.resolveSeriesNumbering(SCOPE, [
+      { kind: 'series', libraryId: 2, seriesId: 9 },
+      { kind: 'unknown', libraryId: 2 },
+    ]);
+    expect(numbering.get('2-s9')).toEqual({ indexedCount: 2, maxIndex: 12, ordinals: new Map([[5, 1]]) });
+    expect(numbering.get('2-u')).toEqual({
+      indexedCount: 0,
+      maxIndex: 0,
+      ordinals: new Map([
+        [6, 1],
+        [7, 2],
+      ]),
+    });
+    expect(await repository.resolveSeriesNumbering(SCOPE, [])).toEqual(new Map());
+    expect(db.execute).toHaveBeenCalledTimes(2);
+  });
+});
