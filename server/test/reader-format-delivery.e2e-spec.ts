@@ -359,6 +359,18 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
       expect(row.pageCount).toBe(2);
     });
 
+    it('backfills an uncounted comic in an untouched folder on the next scan', async () => {
+      await ctx.db.update(schema.bookFiles).set({ pageCount: null }).where(eq(schema.bookFiles.id, sharedCbr.bookFileId));
+
+      await triggerAndWaitForLibraryScan(ctx, sharedLibrary.libraryId);
+
+      const [row] = await ctx.db
+        .select({ pageCount: schema.bookFiles.pageCount })
+        .from(schema.bookFiles)
+        .where(eq(schema.bookFiles.id, sharedCbr.bookFileId));
+      expect(row.pageCount).toBe(2);
+    });
+
     it('returns page counts, streams ordered pages, and rejects invalid page requests and unsupported formats', async () => {
       const pagesResponse = await ctx.app.inject({
         method: 'GET',

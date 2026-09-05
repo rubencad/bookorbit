@@ -144,6 +144,7 @@ const mockGateway = {
 
 const mockComicPages = {
   refreshPageCount: vi.fn().mockResolvedValue(2),
+  backfillPageCounts: vi.fn().mockResolvedValue({ attempted: 0, counted: 0, failed: 0, moreRemaining: false }),
 };
 
 const mockMetadata = {
@@ -1699,6 +1700,32 @@ describe('audio multi-file audiobook', () => {
     expect(mockComicPages.refreshPageCount).toHaveBeenCalledWith({ id: expect.any(Number), absolutePath: '/library/Book/broken.cb7', format: 'cb7' });
     expect(repo.promoteProcessingBookToPresent).toHaveBeenCalled();
     expect(repo.completeScanJob).toHaveBeenCalled();
+  });
+
+  it('runs the page-count backfill after each folder scan', async () => {
+    mockFindCandidates.mockResolvedValue({ candidates: [], skippedDirs: new Set(), unchangedDirs: new Set(), dirMtimes: new Map() });
+
+    const repo = makeRepo();
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockComicPages.backfillPageCounts).toHaveBeenCalledWith(1, 500);
+  });
+
+  it('completes the scan when the page count backfill fails', async () => {
+    mockFindCandidates.mockResolvedValue({ candidates: [], skippedDirs: new Set(), unchangedDirs: new Set(), dirMtimes: new Map() });
+    mockComicPages.backfillPageCounts.mockRejectedValueOnce(new Error('database unavailable'));
+
+    const repo = makeRepo();
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(repo.completeScanJob).toHaveBeenCalled();
+    expect(repo.failScanJob).not.toHaveBeenCalled();
   });
 
   it('merges chapters across every audio file of a multi-file audiobook, in playback order', async () => {

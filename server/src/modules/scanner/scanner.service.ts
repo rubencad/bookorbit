@@ -109,6 +109,7 @@ const BOOK_MISSING_NOTIFY_DEBOUNCE_MS = 5000;
 const WATCHER_NOTIFY_DEBOUNCE_MS = 30_000;
 const TARGETED_BOOK_SCAN_MAX_CONCURRENCY = 8;
 const MISSING_FILE_STAT_BATCH_SIZE = 50;
+const COMIC_PAGE_COUNT_BACKFILL_LIMIT = 500;
 type OrganizationMode = 'book_per_file' | 'book_per_folder';
 
 interface ScanCounts {
@@ -1316,6 +1317,8 @@ export class ScannerService implements OnApplicationBootstrap {
         totals.updatedCount += counts.updatedCount;
         totals.missingCount += counts.missingCount;
 
+        await this.backfillComicPageCounts(libraryId, jobId, folder.id);
+
         // Persist dir scan state after successful folder processing
         if (dirMtimes.size > 0 && scanStateVersion !== undefined) {
           try {
@@ -1712,6 +1715,16 @@ export class ScannerService implements OnApplicationBootstrap {
 
     const becameVisible = await this.scannerRepo.promoteProcessingBookToPresent(book.id);
     return { bookId: book.id, ...counts, retainedFileIds, becameVisible, created: book.created };
+  }
+
+  private async backfillComicPageCounts(libraryId: number, jobId: number, libraryFolderId: number): Promise<void> {
+    try {
+      await this.comicPageService.backfillPageCounts(libraryFolderId, COMIC_PAGE_COUNT_BACKFILL_LIMIT);
+    } catch (err) {
+      this.logger.warn(
+        `[scanner.backfill_comic_page_counts] [fail] libraryId=${libraryId} jobId=${jobId} libraryFolderId=${libraryFolderId} errorClass=${err instanceof Error ? err.name : 'Error'} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - comic page count backfill failed`,
+      );
+    }
   }
 
   private buildMetadataExtractionSources(

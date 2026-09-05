@@ -32,4 +32,26 @@ describe('ComicPageRepository', () => {
     expect(query.sql).toContain('"book_files"."page_count" is distinct from $2');
     expect(query.params).toEqual([9, null]);
   });
+
+  it('selects uncounted comic files from present books in the folder', async () => {
+    const rows = [{ id: 3, absolutePath: '/books/a.cbz', format: 'cbz', pageCount: null }];
+    const limit = vi.fn().mockResolvedValue(rows);
+    const orderBy = vi.fn().mockReturnValue({ limit });
+    const where = vi.fn().mockReturnValue({ orderBy });
+    const innerJoin = vi.fn().mockReturnValue({ where });
+    const from = vi.fn().mockReturnValue({ innerJoin });
+    const select = vi.fn().mockReturnValue({ from });
+    const repository = new ComicPageRepository({ select } as any);
+
+    await expect(repository.findUncountedFiles(7, 500)).resolves.toEqual(rows);
+
+    const query = new PgDialect().sqlToQuery(where.mock.calls[0][0]);
+    expect(query.sql).toContain('"book_files"."library_folder_id" = $1');
+    expect(query.sql).toContain('"book_files"."role" = $2');
+    expect(query.sql).toContain('"book_files"."format" in ($3, $4, $5)');
+    expect(query.sql).toContain('"book_files"."page_count" is null');
+    expect(query.sql).toContain('"books"."status" = $6');
+    expect(query.params).toEqual([7, 'content', 'cbz', 'cbr', 'cb7', 'present']);
+    expect(limit).toHaveBeenCalledWith(500);
+  });
 });

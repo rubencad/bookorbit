@@ -35,7 +35,7 @@ async function readStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 describe('ComicPageService', () => {
   let root: string;
-  let repository: { updatePageCount: ReturnType<typeof vi.fn> };
+  let repository: { updatePageCount: ReturnType<typeof vi.fn>; findUncountedFiles: ReturnType<typeof vi.fn> };
   let service: ComicPageService;
   let nextFileId = 1;
 
@@ -55,7 +55,7 @@ describe('ComicPageService', () => {
   });
 
   beforeEach(() => {
-    repository = { updatePageCount: vi.fn().mockResolvedValue(undefined) };
+    repository = { updatePageCount: vi.fn().mockResolvedValue(undefined), findUncountedFiles: vi.fn().mockResolvedValue([]) };
     service = new ComicPageService(repository as any);
   });
 
@@ -252,6 +252,40 @@ describe('ComicPageService', () => {
     await expect(service.getPageCount(fileRef(join(root, 'locked.cb7'), 'cb7'))).rejects.toThrow(
       new UnprocessableEntityException('CB7 archive is password protected'),
     );
+  });
+
+  describe('backfillPageCounts', () => {
+    it('counts returned files and reports individual failures', async () => {
+      const readable = fileRef(await createCbzComicFixture(root, 'backfill/readable.cbz', TWO_PAGE_ENTRIES), 'cbz');
+      const brokenPath = join(root, 'backfill/broken.cbr');
+      await writeFile(brokenPath, Buffer.from('this is not a rar archive'));
+      const broken = fileRef(brokenPath, 'cbr');
+      repository.findUncountedFiles.mockResolvedValue([readable, broken]);
+
+      await expect(service.backfillPageCounts(7, 10)).resolves.toEqual({ attempted: 2, counted: 1, failed: 1, moreRemaining: false });
+
+      expect(repository.findUncountedFiles).toHaveBeenCalledWith(7, 11);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(readable.id, 2);
+      expect(repository.updatePageCount).toHaveBeenCalledWith(broken.id, null);
+    });
+
+    it('stops at the limit and reports whether more files remain', async () => {
+      const files = await Promise.all(
+        ['one', 'two', 'three'].map(async (name) => fileRef(await createCbzComicFixture(root, `backfill/${name}.cbz`, TWO_PAGE_ENTRIES), 'cbz')),
+      );
+      repository.findUncountedFiles.mockResolvedValue(files);
+
+      await expect(service.backfillPageCounts(7, 2)).resolves.toEqual({ attempted: 2, counted: 2, failed: 0, moreRemaining: true });
+
+      expect(repository.updatePageCount).toHaveBeenCalledTimes(2);
+      expect(repository.updatePageCount).not.toHaveBeenCalledWith(files[2].id, expect.anything());
+    });
+
+    it('returns an empty result when there are no candidates', async () => {
+      await expect(service.backfillPageCounts(7, 500)).resolves.toEqual({ attempted: 0, counted: 0, failed: 0, moreRemaining: false });
+
+      expect(repository.updatePageCount).not.toHaveBeenCalled();
+    });
   });
 
   describe('transforms', () => {

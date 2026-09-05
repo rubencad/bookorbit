@@ -39,6 +39,13 @@ export interface ComicPageStream {
   mimeType: string;
 }
 
+export interface ComicPageCountBackfill {
+  attempted: number;
+  counted: number;
+  failed: number;
+  moreRemaining: boolean;
+}
+
 export const MAX_EXTRACTED_PAGE_BYTES = 64 * 1024 * 1024;
 
 const MANIFEST_CACHE_SCOPE = 'manifest';
@@ -122,6 +129,32 @@ export class ComicPageService {
     }
     await this.repository.updatePageCount(file.id, manifest.pages.length);
     return manifest.pages.length;
+  }
+
+  async backfillPageCounts(libraryFolderId: number, limit: number): Promise<ComicPageCountBackfill> {
+    const startedAt = Date.now();
+    const candidates = await this.repository.findUncountedFiles(libraryFolderId, limit + 1);
+    const files = candidates.slice(0, limit);
+    const result: ComicPageCountBackfill = { attempted: files.length, counted: 0, failed: 0, moreRemaining: candidates.length > limit };
+
+    for (const file of files) {
+      try {
+        await this.refreshPageCount(file);
+        result.counted++;
+      } catch (error) {
+        result.failed++;
+        this.logger.warn(
+          `[comic.page_count_backfill] [fail] libraryFolderId=${libraryFolderId} fileId=${file.id} path="${sanitizeLogValue(file.absolutePath)}" errorClass=${errorClass(error)} error="${errorMessage(error)}" - comic page count backfill failed for file`,
+        );
+      }
+    }
+
+    if (files.length > 0) {
+      this.logger.log(
+        `[comic.page_count_backfill] [end] libraryFolderId=${libraryFolderId} attempted=${result.attempted} counted=${result.counted} failed=${result.failed} moreRemaining=${result.moreRemaining} durationMs=${Date.now() - startedAt} - comic page count backfill completed`,
+      );
+    }
+    return result;
   }
 
   async streamPage(file: ComicFileRef, pageIndex: number, transform: ComicPageTransform = {}): Promise<ComicPageStream> {
