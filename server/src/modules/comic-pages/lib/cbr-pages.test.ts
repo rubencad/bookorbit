@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'fs';
+import fs from 'fs';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -7,10 +7,6 @@ import { buildStoredRarArchive } from '../../../../test/e2e/comics/rar-stored-ar
 import { listCbrPages } from './cbr-pages';
 
 const REPEATS = 100;
-
-function openDescriptors(): number {
-  return readdirSync('/dev/fd').length;
-}
 
 describe('listCbrPages', () => {
   let root: string;
@@ -52,14 +48,25 @@ describe('listCbrPages', () => {
     await expect(listCbrPages(lockedPath)).rejects.toThrow('CBR archive is password protected');
   });
 
-  it.skipIf(!existsSync('/dev/fd'))('does not leak file descriptors when listing succeeds or fails', async () => {
-    const before = openDescriptors();
+  it('does not leak file descriptors when listing succeeds or fails', async () => {
+    const openSpy = vi.spyOn(fs, 'openSync');
+    const closeSpy = vi.spyOn(fs, 'closeSync');
+    try {
+      for (let attempt = 0; attempt < REPEATS; attempt++) {
+        await listCbrPages(readablePath);
+        await expect(listCbrPages(lockedPath)).rejects.toThrow('CBR archive is password protected');
+      }
 
-    for (let attempt = 0; attempt < REPEATS; attempt++) {
-      await listCbrPages(readablePath);
-      await expect(listCbrPages(lockedPath)).rejects.toThrow('CBR archive is password protected');
+      const archiveDescriptors = openSpy.mock.calls.flatMap((call, index) =>
+        call[0] === readablePath || call[0] === lockedPath ? [openSpy.mock.results[index].value as number] : [],
+      );
+      const closedDescriptors = new Set(closeSpy.mock.calls.map((call) => call[0]));
+
+      expect(archiveDescriptors).toHaveLength(2 * REPEATS);
+      expect(archiveDescriptors.filter((descriptor) => !closedDescriptors.has(descriptor))).toEqual([]);
+    } finally {
+      openSpy.mockRestore();
+      closeSpy.mockRestore();
     }
-
-    expect(openDescriptors()).toBeLessThan(before + REPEATS);
   });
 });
