@@ -225,7 +225,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect(revoked.json()).toMatchObject({ message: 'Komga access revoked' });
     });
 
-    it('answers 403 on every route while the API is disabled', async () => {
+    it('returns 403 for every route when the API is disabled', async () => {
       await setKomgaApiEnabled(false);
       try {
         const response = await komgaGet('/komga/api/v2/users/me', grouped);
@@ -241,7 +241,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect((await komgaGet('/komga/api/v2/users/me', grouped)).statusCode).toBe(200);
     });
 
-    it('answers unknown Komga paths with a JSON 404 instead of the SPA', async () => {
+    it('returns a JSON 404 for unknown Komga paths', async () => {
       const response = await komgaGet('/komga/api/v1/tasks', grouped);
       expect(response.statusCode).toBe(404);
       expect(response.headers['content-type']).toContain('application/json');
@@ -250,7 +250,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
   });
 
   describe('users/me and libraries', () => {
-    it('describes the account with reader roles and the accessible libraries', async () => {
+    it('returns reader roles and accessible libraries for the current account', async () => {
       const v2 = await komgaGet('/komga/api/v2/users/me', grouped);
       expect(v2.statusCode).toBe(200);
       expect(v2.json()).toEqual({
@@ -297,7 +297,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
   });
 
   describe('series', () => {
-    it('groups books without a series into one Unknown Series bucket when the account asks for it', async () => {
+    it('groups unassigned books into Unknown Series when grouping is enabled', async () => {
       const response = await komgaGet('/komga/api/v1/series', grouped);
       expect(response.statusCode).toBe(200);
       const body = response.json() as KomgaPageBody<SeriesBody>;
@@ -318,7 +318,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect(unknown).toMatchObject({ id: `${comicLibrary.libraryId}-u`, booksCount: 1, oneshot: false });
     });
 
-    it('exposes standalone books as oneshot series and non-comics only when the account includes them', async () => {
+    it('returns standalone books as one-shot series and includes non-comics when enabled', async () => {
       const response = await komgaGet('/komga/api/v1/series', flat);
       expect(response.statusCode).toBe(200);
       const body = response.json() as KomgaPageBody<SeriesBody>;
@@ -381,7 +381,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect((await komgaGet(`/komga/api/v1/series/${comicLibrary.libraryId}-s${seriesAId}`, peerCredentials)).statusCode).toBe(404);
     });
 
-    it('orders series books by numberSort and describes each book in the context of that series', async () => {
+    it('orders series books by numberSort and uses the requested series context', async () => {
       const response = await komgaGet(
         `/komga/api/v1/series/${comicLibrary.libraryId}-s${seriesAId}/books?unpaged=true&media_status=READY&deleted=false`,
         grouped,
@@ -479,7 +479,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       ]);
     });
 
-    it('reports the primary series membership when a book is fetched directly', async () => {
+    it('uses the primary series membership for direct book requests', async () => {
       const response = await komgaGet(`/komga/api/v1/books/${crossover.bookId}`, grouped);
       expect(response.statusCode).toBe(200);
       expect(response.json()).toMatchObject({
@@ -633,10 +633,31 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
   });
 
   describe('referentials and empty lists', () => {
-    it('returns scoped referential values and the fixed role list', async () => {
+    it('returns scoped referential values and supported author roles', async () => {
       const authors = await komgaGet('/komga/api/v1/authors', grouped);
       expect(authors.json()).toEqual([{ name: writerName, role: 'writer' }]);
-      expect((await komgaGet('/komga/api/v2/authors', grouped)).json()).toEqual([{ name: writerName, role: 'writer' }]);
+      const v2Authors = await komgaGet('/komga/api/v2/authors', grouped);
+      expect(v2Authors.statusCode).toBe(200);
+      expect(v2Authors.json()).toMatchObject({
+        content: [{ name: writerName, role: 'writer' }],
+        totalElements: 1,
+        totalPages: 1,
+        first: true,
+        last: true,
+      });
+      expect(v2Authors.json().pageable).toMatchObject({ paged: true, pageNumber: 0, pageSize: 20 });
+      expect((await komgaGet('/komga/api/v2/authors?role=penciller', grouped)).json()).toMatchObject({ content: [], totalElements: 0 });
+      expect((await komgaGet('/komga/api/v2/tags?unpaged=true', grouped)).json()).toMatchObject({
+        content: [matureTag],
+        pageable: { unpaged: true },
+      });
+      expect(
+        (await komgaGet(`/komga/api/v2/tags?search=${encodeURIComponent(matureTag.slice(0, 5).toUpperCase())}`, grouped)).json().content,
+      ).toEqual([matureTag]);
+      expect((await komgaGet('/komga/api/v2/tags?search=nothing-matches', grouped)).json()).toMatchObject({ content: [], empty: true });
+      expect((await komgaGet('/komga/api/v2/genres?size=1', grouped)).json()).toMatchObject({ content: [], size: 1, totalElements: 0 });
+      expect((await komgaGet('/komga/api/v2/age-ratings', grouped)).json()).toMatchObject({ content: [], totalElements: 0, empty: true });
+      expect((await komgaGet('/komga/api/v2/sharing-labels', grouped)).json()).toMatchObject({ content: [], totalElements: 0 });
       expect((await komgaGet('/komga/api/v1/authors/names', grouped)).json()).toEqual([writerName]);
       expect((await komgaGet('/komga/api/v1/authors/roles', grouped)).json()).toEqual([
         'writer',
@@ -653,7 +674,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect((await komgaGet(`/komga/api/v1/authors?library_id=${hiddenLibrary.libraryId}`, grouped)).statusCode).toBe(403);
     });
 
-    it('answers collections and readlists with empty Spring pages', async () => {
+    it('returns empty Spring pages for collections and read lists', async () => {
       for (const path of ['/komga/api/v1/collections?unpaged=true', '/komga/api/v1/readlists']) {
         const response = await komgaGet(path, grouped);
         expect(response.statusCode).toBe(200);

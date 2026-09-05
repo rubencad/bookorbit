@@ -97,6 +97,14 @@ export const referentialQuerySchema = z.object({
 });
 export type ReferentialQuery = z.infer<typeof referentialQuerySchema>;
 
+export const referentialPageQuerySchema = z.object({
+  ...pageQuery,
+  library_id: idList,
+  search: singleString,
+  role: singleString,
+});
+export type ReferentialPageQuery = z.infer<typeof referentialPageQuerySchema>;
+
 export const emptyPageQuerySchema = z.object(pageQuery);
 
 export function parseKomgaQuery<T>(schema: z.ZodType<T>, query: KomgaRawQuery | undefined): T {
