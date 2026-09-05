@@ -102,6 +102,13 @@ export function isStaticAssetPath(url: string): boolean {
   return lastSegment.includes('.');
 }
 
+export const GLOBAL_PREFIX_EXCLUDED_ROUTES = ['api/kobo/:deviceToken/(.*)', 'api/v3/(.*)', 'api/UserStorage/(.*)', 'komga/(.*)'];
+const JSON_ONLY_PATH_PREFIXES = ['/api', '/komga'];
+
+export function isJsonOnlyPath(url: string): boolean {
+  return JSON_ONLY_PATH_PREFIXES.some((prefix) => url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`));
+}
+
 export function shouldServeSpaFallback(url: string): boolean {
   return !isStaticAssetPath(url);
 }

@@ -16,6 +16,7 @@ import {
   registerConditionalHsts,
   isStaticAssetPath,
   shouldServeSpaFallback,
+  isJsonOnlyPath,
 } from './bootstrap.utils';
 
 describe('SPA fallback routing', () => {
@@ -42,6 +43,19 @@ describe('SPA fallback routing', () => {
   it('ignores the query string and hash when deciding', () => {
     expect(shouldServeSpaFallback('/assets/app-abc123.js?import&t=1')).toBe(false);
     expect(shouldServeSpaFallback('/dashboard?tab=recent#top')).toBe(true);
+  });
+});
+
+describe('isJsonOnlyPath', () => {
+  it.each(['/api', '/api/v1/books', '/api?x=1', '/komga', '/komga/api/v1/series', '/komga/api/v2/users/me?x=1'])(
+    'treats %s as an API path',
+    (url) => {
+      expect(isJsonOnlyPath(url)).toBe(true);
+    },
+  );
+
+  it.each(['/', '/apis', '/komgareader', '/settings/komga', '/library/12'])('leaves %s to the SPA fallback', (url) => {
+    expect(isJsonOnlyPath(url)).toBe(false);
   });
 });
 

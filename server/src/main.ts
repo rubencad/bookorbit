@@ -24,6 +24,8 @@ import {
   registerEmptyBodyContentTypeParser,
   shouldInjectEmptyJsonBody,
   shouldServeSpaFallback,
+  GLOBAL_PREFIX_EXCLUDED_ROUTES,
+  isJsonOnlyPath,
 } from './common/utils/bootstrap.utils';
 
 const MAX_COVER_BYTES = 20 * 1024 * 1024;
@@ -61,9 +63,7 @@ async function bootstrap() {
 
   app.useWebSocketAdapter(new IoAdapter(app));
 
-  app.setGlobalPrefix('api/v1', {
-    exclude: ['api/kobo/:deviceToken/(.*)', 'api/v3/(.*)', 'api/UserStorage/(.*)'],
-  });
+  app.setGlobalPrefix('api/v1', { exclude: GLOBAL_PREFIX_EXCLUDED_ROUTES });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -101,7 +101,7 @@ async function bootstrap() {
     const adapterAny = adapter as any;
     adapterAny.setNotFoundHandler = (nestHandler: (req: unknown, res: unknown) => void) => {
       fastify.setNotFoundHandler(async (request, reply) => {
-        if (request.url.startsWith('/api')) {
+        if (isJsonOnlyPath(request.url)) {
           return nestHandler(request, reply);
         }
         if (!shouldServeSpaFallback(request.url)) {
