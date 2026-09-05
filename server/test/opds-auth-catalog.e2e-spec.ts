@@ -5,10 +5,13 @@ import { dirname, join, relative } from 'path';
 import { eq } from 'drizzle-orm';
 import { Permission } from '@bookorbit/types';
 import { ConfigService } from '@nestjs/config';
+import sharp from 'sharp';
 
 import { normalizeMetadataTextKey } from '../src/common/utils/metadata-text-normalize.utils';
 import { createCoverToken } from '../src/modules/opds/opds-auth.guard';
 import * as schema from '../src/db/schema';
+import { waitForCondition } from './e2e/app-harness';
+import { COMIC_PAGE_JPEG, COMIC_PAGE_PNG, createCbzComicFixture } from './e2e/comics/comic-fixture-builder';
 import { createEpubFixture, createFb2Fixture, writeFixtureFile } from './e2e/opds/opds-fixture-builder';
 import {
   authHeader,
@@ -74,15 +77,21 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
   let revokedParent!: TestUserSession;
   let noOpdsPermissionUser!: TestUserSession;
   let fb2Reader!: TestUserSession;
+  let comicReader!: TestUserSession;
+  let comicPeer!: TestUserSession;
 
   let visibleLibrary!: CreatedLibrary;
   let hiddenLibrary!: CreatedLibrary;
   let fb2Library!: CreatedLibrary;
+  let comicLibrary!: CreatedLibrary;
 
   let visibleBookAlpha!: LocatedBookFile;
   let visibleBookBeta!: LocatedBookFile;
   let hiddenBook!: LocatedBookFile;
   let rawFb2Book!: LocatedBookFile;
+  let visibleComic!: LocatedBookFile;
+  let hiddenComic!: LocatedBookFile;
+  let widePagePng!: Buffer;
   let rawFb2FixtureContent!: string;
   let visibleAlphaAlternativeFileIds!: Record<'mobi' | 'azw3' | 'fb2', number>;
 
@@ -90,6 +99,8 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
   let disabledCredentials!: OpdsCredentials;
   let revokedCredentials!: OpdsCredentials;
   let fb2Credentials!: OpdsCredentials;
+  let comicReaderCredentials!: OpdsCredentials;
+  let comicPeerCredentials!: OpdsCredentials;
 
   let ownerCollectionId!: number;
   let foreignCollectionId!: number;
@@ -108,6 +119,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
     visibleLibrary = await createLibraryWithFolder(ctx, { name: `opds-visible-library-${randomUUID()}` });
     hiddenLibrary = await createLibraryWithFolder(ctx, { name: `opds-hidden-library-${randomUUID()}` });
     fb2Library = await createLibraryWithFolder(ctx, { name: `opds-fb2-library-${randomUUID()}` });
+    comicLibrary = await createLibraryWithFolder(ctx, { name: `opds-comic-library-${randomUUID()}` });
 
     const visibleAlphaPath = await createEpubFixture(visibleLibrary.folderPath, 'visible-alpha.epub', { title: 'Visible Alpha' });
     const visibleBetaPath = await createEpubFixture(visibleLibrary.folderPath, 'visible-beta.epub', { title: 'Visible Beta' });
@@ -119,14 +131,32 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
     });
     rawFb2FixtureContent = await readFile(rawFb2Path, 'utf8');
 
+    widePagePng = await sharp({ create: { width: 8, height: 4, channels: 3, background: '#336699' } })
+      .png()
+      .toBuffer();
+    const webpPage = await sharp({ create: { width: 4, height: 4, channels: 3, background: '#996633' } })
+      .webp()
+      .toBuffer();
+    const comicPages = [
+      { path: 'pages/001-wide.png', content: widePagePng },
+      { path: 'pages/002-photo.jpg', content: COMIC_PAGE_JPEG },
+      { path: 'pages/003-modern.webp', content: webpPage },
+      { path: '.hidden/004-secret.png', content: COMIC_PAGE_PNG },
+    ];
+    const visibleComicPath = await createCbzComicFixture(comicLibrary.folderPath, 'visible-comic.cbz', comicPages);
+    const hiddenComicPath = await createCbzComicFixture(hiddenLibrary.folderPath, 'hidden-comic.cbz', comicPages);
+
     await triggerAndWaitForLibraryScan(ctx, visibleLibrary.libraryId);
     await triggerAndWaitForLibraryScan(ctx, hiddenLibrary.libraryId);
     await triggerAndWaitForLibraryScan(ctx, fb2Library.libraryId);
+    await triggerAndWaitForLibraryScan(ctx, comicLibrary.libraryId);
 
     visibleBookAlpha = await locateBookByAbsolutePath(ctx, visibleAlphaPath);
     visibleBookBeta = await locateBookByAbsolutePath(ctx, visibleBetaPath);
     hiddenBook = await locateBookByAbsolutePath(ctx, hiddenGammaPath);
     rawFb2Book = await locateBookByAbsolutePath(ctx, rawFb2Path);
+    visibleComic = await locateBookByAbsolutePath(ctx, visibleComicPath);
+    hiddenComic = await locateBookByAbsolutePath(ctx, hiddenComicPath);
     visibleAlphaAlternativeFileIds = {
       mobi: await attachContentFileToBook(
         visibleBookAlpha.bookId,
@@ -175,12 +205,16 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
     revokedParent = await createUserAndLogin(ctx, { permissions: [Permission.OpdsAccess] });
     noOpdsPermissionUser = await createUserAndLogin(ctx);
     fb2Reader = await createUserAndLogin(ctx, { permissions: [Permission.OpdsAccess] });
+    comicReader = await createUserAndLogin(ctx, { permissions: [Permission.OpdsAccess] });
+    comicPeer = await createUserAndLogin(ctx, { permissions: [Permission.OpdsAccess] });
 
     await grantLibraryAccess(ctx, owner.userId, visibleLibrary.libraryId, 'viewer');
     await grantLibraryAccess(ctx, intruder.userId, visibleLibrary.libraryId, 'viewer');
     await grantLibraryAccess(ctx, disabledParent.userId, visibleLibrary.libraryId, 'viewer');
     await grantLibraryAccess(ctx, revokedParent.userId, visibleLibrary.libraryId, 'viewer');
     await grantLibraryAccess(ctx, fb2Reader.userId, fb2Library.libraryId, 'viewer');
+    await grantLibraryAccess(ctx, comicReader.userId, comicLibrary.libraryId, 'viewer');
+    await grantLibraryAccess(ctx, comicPeer.userId, comicLibrary.libraryId, 'viewer');
 
     const ownerOpds = await createOpdsUserCredential(ctx, {
       userId: owner.userId,
@@ -202,11 +236,31 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       username: `opds-fb2-${randomUUID().slice(0, 8)}`,
       password: 'Fb2OpdsPass123',
     });
+    const comicReaderOpds = await createOpdsUserCredential(ctx, {
+      userId: comicReader.userId,
+      username: `opds-comic-${randomUUID().slice(0, 8)}`,
+      password: 'ComicOpdsPass123',
+    });
+    const comicPeerOpds = await createOpdsUserCredential(ctx, {
+      userId: comicPeer.userId,
+      username: `opds-peer-${randomUUID().slice(0, 8)}`,
+      password: 'PeerOpdsPass123',
+    });
 
     ownerCredentials = { username: ownerOpds.row.username, password: ownerOpds.password };
     disabledCredentials = { username: disabledOpds.row.username, password: disabledOpds.password };
     revokedCredentials = { username: revokedOpds.row.username, password: revokedOpds.password };
     fb2Credentials = { username: fb2Opds.row.username, password: fb2Opds.password };
+    comicReaderCredentials = { username: comicReaderOpds.row.username, password: comicReaderOpds.password };
+    comicPeerCredentials = { username: comicPeerOpds.row.username, password: comicPeerOpds.password };
+
+    await ctx.db.insert(schema.readingProgress).values({
+      bookFileId: visibleComic.bookFileId,
+      userId: comicReader.userId,
+      percentage: 66.7,
+      pageNumber: 2,
+      lastReadAt: new Date('2026-02-03T04:05:06.789Z'),
+    });
 
     await setUserActive(ctx, disabledParent.userId, false);
     await replaceUserPermissions(ctx, revokedParent.userId, []);
@@ -426,6 +480,26 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
     it('rejects invalid token auth on image routes', async () => {
       const response = await opdsGet(`/api/v1/opds/${visibleBookAlpha.bookId}/cover?t=not-a-valid-token`);
       expectError(response, 401, 'Invalid token');
+    });
+
+    it('stops accepting the credentials of a deleted OPDS account that had just authenticated', async () => {
+      const credentials = { username: `opds-deleted-${randomUUID().slice(0, 8)}`, password: 'DeletedOpdsPass123' };
+      const createResponse = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/opds-users',
+        headers: authHeader(owner.accessToken),
+        payload: credentials,
+      });
+      expect(createResponse.statusCode).toBe(201);
+      const { id } = createResponse.json() as { id: number };
+
+      expect((await opdsGet('/api/v1/opds/libraries', credentials)).statusCode).toBe(200);
+      expect((await opdsGet('/api/v1/opds/libraries', credentials)).statusCode).toBe(200);
+
+      const deleteResponse = await ctx.app.inject({ method: 'DELETE', url: `/api/v1/opds-users/${id}`, headers: authHeader(owner.accessToken) });
+      expect(deleteResponse.statusCode).toBe(204);
+
+      expectError(await opdsGet('/api/v1/opds/libraries', credentials), 401, 'Invalid credentials');
     });
   });
 
@@ -668,6 +742,130 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
     });
   });
 
+  describe('page streaming extension', () => {
+    const comicCatalogPath = () => `/api/v1/opds/catalog?libraryId=${comicLibrary.libraryId}`;
+    const pagePath = (pageIndex: number, query = '') =>
+      `/api/v1/opds/${visibleComic.bookId}/pages/${pageIndex}?fileId=${visibleComic.bookFileId}${query}`;
+
+    it('advertises a stream link carrying the page count, the reader progress, and unescaped placeholders', async () => {
+      const response = await opdsGet(comicCatalogPath(), comicReaderCredentials);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('xmlns:pse="http://vaemendis.net/opds-pse/ns"');
+
+      const link = streamLink(response.body, visibleComic.bookId);
+      expect(link).toContain('rel="http://vaemendis.net/opds-pse/stream"');
+      expect(link).toContain(
+        `href="/api/v1/opds/${visibleComic.bookId}/pages/{pageNumber}?fileId=${visibleComic.bookFileId}&amp;maxWidth={maxWidth}"`,
+      );
+      expect(link).toContain('type="image/jpeg"');
+      expect(link).toContain('pse:count="3"');
+      expect(link).toContain('pse:lastRead="2"');
+      expect(link).toContain('pse:lastReadDate="2026-02-03T04:05:06Z"');
+      expect(response.body).toContain(
+        `href="/api/v1/opds/${visibleComic.bookId}/download?fileId=${visibleComic.bookFileId}" type="application/vnd.comicbook+zip"`,
+      );
+
+      const epubCatalog = await opdsGet('/api/v1/opds/catalog?page=1&size=10', ownerCredentials);
+      expect(epubCatalog.statusCode).toBe(200);
+      expect(epubCatalog.body).not.toContain('opds-pse/stream');
+    });
+
+    it('keeps the last read page private to the user who read the comic', async () => {
+      const response = await opdsGet(comicCatalogPath(), comicPeerCredentials);
+      expect(response.statusCode).toBe(200);
+
+      const link = streamLink(response.body, visibleComic.bookId);
+      expect(link).toContain('pse:count="3"');
+      expect(link).not.toContain('pse:lastRead');
+    });
+
+    it('streams zero-based pages in their native type and transcodes unsupported types to JPEG', async () => {
+      const first = await opdsGet(pagePath(0), comicReaderCredentials);
+      expect(first.statusCode).toBe(200);
+      expect(first.headers['content-type']).toContain('image/png');
+      expect(first.headers['cache-control']).toBe('private, max-age=86400');
+      expect(first.headers.etag).toBeTruthy();
+      expect(responseBuffer(first)).toEqual(widePagePng);
+
+      const second = await opdsGet(pagePath(1), comicReaderCredentials);
+      expect(second.statusCode).toBe(200);
+      expect(second.headers['content-type']).toContain('image/jpeg');
+      expect(responseBuffer(second)).toEqual(COMIC_PAGE_JPEG);
+
+      const third = await opdsGet(pagePath(2), comicReaderCredentials);
+      expect(third.statusCode).toBe(200);
+      expect(third.headers['content-type']).toContain('image/jpeg');
+      const thirdMetadata = await sharp(responseBuffer(third)).metadata();
+      expect([thirdMetadata.format, thirdMetadata.width, thirdMetadata.height]).toEqual(['jpeg', 4, 4]);
+
+      expectError(await opdsGet(pagePath(3), comicReaderCredentials), 404, 'Page 3 out of range');
+      expectError(await opdsGet(pagePath(-1), comicReaderCredentials), 404, 'Page -1 out of range');
+
+      const notModified = await ctx.app.inject({
+        method: 'GET',
+        url: pagePath(0),
+        headers: {
+          authorization: basicAuth(comicReaderCredentials.username, comicReaderCredentials.password),
+          'if-none-match': String(first.headers.etag),
+        },
+      });
+      expect(notModified.statusCode).toBe(304);
+    });
+
+    it('resizes pages to maxWidth without enlarging and rejects widths outside the limit', async () => {
+      const shrunk = await opdsGet(pagePath(0, '&maxWidth=4'), comicReaderCredentials);
+      expect(shrunk.statusCode).toBe(200);
+      expect(shrunk.headers['content-type']).toContain('image/png');
+      const shrunkMetadata = await sharp(responseBuffer(shrunk)).metadata();
+      expect([shrunkMetadata.format, shrunkMetadata.width, shrunkMetadata.height]).toEqual(['png', 4, 2]);
+      expect(shrunk.headers.etag).not.toBe((await opdsGet(pagePath(0), comicReaderCredentials)).headers.etag);
+
+      const untouched = await opdsGet(pagePath(0, '&maxWidth=100'), comicReaderCredentials);
+      expect(untouched.statusCode).toBe(200);
+      expect((await sharp(responseBuffer(untouched)).metadata()).width).toBe(8);
+
+      expectError(await opdsGet(pagePath(0, '&maxWidth=0'), comicReaderCredentials), 400, 'maxWidth must be a positive integer');
+      expectError(await opdsGet(pagePath(0, '&maxWidth=wide'), comicReaderCredentials), 400, 'maxWidth must be a positive integer');
+      expectError(await opdsGet(pagePath(0, '&maxWidth=4097'), comicReaderCredentials), 400, 'maxWidth must be between 1 and 4096');
+    });
+
+    it('refuses pages of books outside the reader libraries, of non-comic files, and of foreign file ids', async () => {
+      const hidden = await opdsGet(`/api/v1/opds/${hiddenComic.bookId}/pages/0?fileId=${hiddenComic.bookFileId}`, comicReaderCredentials);
+      expectError(hidden, 403, 'No access to this book');
+
+      const epub = await opdsGet(`/api/v1/opds/${visibleBookAlpha.bookId}/pages/0`, ownerCredentials);
+      expectError(epub, 404, 'Comic file not found');
+
+      const foreignFile = await opdsGet(`/api/v1/opds/${visibleComic.bookId}/pages/0?fileId=${hiddenComic.bookFileId}`, comicReaderCredentials);
+      expectError(foreignFile, 404, 'Comic file not found');
+
+      const jwtSecret = ctx.app.get(ConfigService).getOrThrow<string>('auth.jwtSecret');
+      const token = createCoverToken(comicReader.userId, jwtSecret);
+      const tokenResponse = await opdsGet(`${pagePath(0)}&t=${encodeURIComponent(token)}`);
+      expectError(tokenResponse, 401, 'Basic authentication required');
+    });
+
+    it('withholds the stream link until the page count is known and recounts the archive in the background', async () => {
+      await ctx.db.update(schema.bookFiles).set({ pageCount: null }).where(eq(schema.bookFiles.id, visibleComic.bookFileId));
+
+      const before = await opdsGet(comicCatalogPath(), comicReaderCredentials);
+      expect(before.statusCode).toBe(200);
+      expect(findStreamLink(before.body, visibleComic.bookId)).toBeUndefined();
+      expect(before.body).toContain(`href="/api/v1/opds/${visibleComic.bookId}/download?fileId=${visibleComic.bookFileId}"`);
+
+      await waitForCondition(async () => {
+        const [row] = await ctx.db
+          .select({ pageCount: schema.bookFiles.pageCount })
+          .from(schema.bookFiles)
+          .where(eq(schema.bookFiles.id, visibleComic.bookFileId));
+        expect(row.pageCount).toBe(3);
+      });
+
+      const after = await opdsGet(comicCatalogPath(), comicReaderCredentials);
+      expect(streamLink(after.body, visibleComic.bookId)).toContain('pse:count="3"');
+    });
+  });
+
   async function attachContentFileToBook(
     bookId: number,
     library: CreatedLibrary,
@@ -746,6 +944,20 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       url: path,
       headers: credentials ? { authorization: basicAuth(credentials.username, credentials.password) } : undefined,
     });
+  }
+
+  function findStreamLink(feedXml: string, bookId: number): string | undefined {
+    return feedXml.split('\n').find((line) => line.includes('opds-pse/stream') && line.includes(`/api/v1/opds/${bookId}/pages/`));
+  }
+
+  function streamLink(feedXml: string, bookId: number): string {
+    const link = findStreamLink(feedXml, bookId);
+    if (!link) throw new Error(`Expected a page stream link for book ${bookId}`);
+    return link;
+  }
+
+  function responseBuffer(response: Awaited<ReturnType<OpdsE2EContext['app']['inject']>>): Buffer {
+    return Buffer.from(response.rawPayload);
   }
 
   function extractCoverToken(feedXml: string, bookId: number): string {

@@ -488,6 +488,7 @@ export const E2E_SUITES = Object.freeze({
     useDedicatedDatabase: true,
     changedPaths: [
       "server/src/modules/opds/**",
+      "server/src/modules/comic-pages/**",
       "server/src/modules/book/**",
       "server/src/modules/library/**",
       "server/src/modules/collection/**",
@@ -495,6 +496,7 @@ export const E2E_SUITES = Object.freeze({
       "server/src/modules/user/**",
       "server/src/modules/auth/**",
       "server/src/modules/app-settings/**",
+      "server/src/common/auth/**",
       "server/test/opds-auth-catalog.e2e-spec.ts",
       "server/test/e2e/opds/**",
       "server/test/e2e/**",
