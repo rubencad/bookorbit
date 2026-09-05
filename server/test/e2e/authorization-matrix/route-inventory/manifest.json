@@ -1,7 +1,7 @@
 {
-  "totalRoutes": 454,
+  "totalRoutes": 492,
   "byPermission": {
-    "(none)": 169,
+    "(none)": 203,
     "Permission.ManageMetadataConfig": 34,
     "Permission.EmailSend": 30,
     "Permission.LibraryEditMetadata": 34,
@@ -27,7 +27,8 @@
     "Permission.StorygraphSync": 1,
     "Permission.BookRequestAccess": 25,
     "Permission.ManageBookRequests": 20,
-    "Permission.BookRequestSelfFulfill": 11
+    "Permission.BookRequestSelfFulfill": 11,
+    "Permission.KomgaAccess": 4
   },
   "byLibraryAccess": {
     "'viewer'": 4,
@@ -41,6 +42,7 @@
     "routes-05.json",
     "routes-06.json",
     "routes-07.json",
-    "routes-08.json"
+    "routes-08.json",
+    "routes-09.json"
   ]
 }

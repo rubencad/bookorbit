@@ -17,6 +17,7 @@ import {
   createBookCoverArtifacts,
   createKoboDevice,
   createLibraryWithFolder,
+  createKomgaUser,
   createOpdsUser,
   createReadingSession,
   createBookDockRow,
@@ -86,6 +87,9 @@ interface Personas {
   opdsIntruder: TestUserSession;
   opdsDisabled: TestUserSession;
   opdsRevoked: TestUserSession;
+  komgaOwner: TestUserSession;
+  komgaDisabled: TestUserSession;
+  komgaRevoked: TestUserSession;
   koboActive: TestUserSession;
   koboDisabled: TestUserSession;
   koboRevoked: TestUserSession;
@@ -179,6 +183,9 @@ describe('Authorization matrix (e2e)', () => {
   let opdsValidCreds: { username: string; password: string };
   let opdsDisabledCreds: { username: string; password: string };
   let opdsRevokedCreds: { username: string; password: string };
+  let komgaValidCreds: { username: string; password: string };
+  let komgaDisabledCreds: { username: string; password: string };
+  let komgaRevokedCreds: { username: string; password: string };
 
   beforeAll(async () => {
     ctx = await createAuthorizationMatrixE2EContext();
@@ -219,6 +226,9 @@ describe('Authorization matrix (e2e)', () => {
       opdsIntruder: await createUserAndLogin(ctx, { permissions: [Permission.OpdsAccess] }),
       opdsDisabled: await createUserAndLogin(ctx, { permissions: [Permission.OpdsAccess] }),
       opdsRevoked: await createUserAndLogin(ctx, { permissions: [Permission.OpdsAccess] }),
+      komgaOwner: await createUserAndLogin(ctx, { permissions: [Permission.KomgaAccess] }),
+      komgaDisabled: await createUserAndLogin(ctx, { permissions: [Permission.KomgaAccess] }),
+      komgaRevoked: await createUserAndLogin(ctx, { permissions: [Permission.KomgaAccess] }),
       koboActive: await createUserAndLogin(ctx, { permissions: [Permission.KoboSync] }),
       koboDisabled: await createUserAndLogin(ctx, { permissions: [Permission.KoboSync] }),
       koboRevoked: await createUserAndLogin(ctx, { permissions: [Permission.KoboSync] }),
@@ -239,6 +249,9 @@ describe('Authorization matrix (e2e)', () => {
       grantLibraryAccess(ctx, personas.opdsIntruder.userId, libraryA.libraryId, 'viewer'),
       grantLibraryAccess(ctx, personas.opdsDisabled.userId, libraryA.libraryId, 'viewer'),
       grantLibraryAccess(ctx, personas.opdsRevoked.userId, libraryA.libraryId, 'viewer'),
+      grantLibraryAccess(ctx, personas.komgaOwner.userId, libraryA.libraryId, 'viewer'),
+      grantLibraryAccess(ctx, personas.komgaDisabled.userId, libraryA.libraryId, 'viewer'),
+      grantLibraryAccess(ctx, personas.komgaRevoked.userId, libraryA.libraryId, 'viewer'),
       grantLibraryAccess(ctx, personas.koboActive.userId, libraryA.libraryId, 'viewer'),
       grantLibraryAccess(ctx, personas.koboDisabled.userId, libraryA.libraryId, 'viewer'),
       grantLibraryAccess(ctx, personas.koboRevoked.userId, libraryA.libraryId, 'viewer'),
@@ -246,6 +259,8 @@ describe('Authorization matrix (e2e)', () => {
 
     await setUserActive(ctx, personas.opdsDisabled.userId, false);
     await replaceUserPermissions(ctx, personas.opdsRevoked.userId, []);
+    await setUserActive(ctx, personas.komgaDisabled.userId, false);
+    await replaceUserPermissions(ctx, personas.komgaRevoked.userId, []);
     await setUserActive(ctx, personas.koboDisabled.userId, false);
     await replaceUserPermissions(ctx, personas.koboRevoked.userId, []);
 
@@ -320,6 +335,13 @@ describe('Authorization matrix (e2e)', () => {
     opdsValidCreds = { username: validOpds.row.username, password: validOpds.password };
     opdsDisabledCreds = { username: disabledOpds.row.username, password: disabledOpds.password };
     opdsRevokedCreds = { username: revokedOpds.row.username, password: revokedOpds.password };
+
+    const validKomga = await createKomgaUser(ctx, { userId: personas.komgaOwner.userId });
+    const disabledKomga = await createKomgaUser(ctx, { userId: personas.komgaDisabled.userId });
+    const revokedKomga = await createKomgaUser(ctx, { userId: personas.komgaRevoked.userId });
+    komgaValidCreds = { username: validKomga.row.username, password: validKomga.password };
+    komgaDisabledCreds = { username: disabledKomga.row.username, password: disabledKomga.password };
+    komgaRevokedCreds = { username: revokedKomga.row.username, password: revokedKomga.password };
   }, 240_000);
 
   afterAll(async () => {
@@ -642,6 +664,11 @@ describe('Authorization matrix (e2e)', () => {
         [Permission.OpdsAccess]: {
           method: 'GET',
           path: '/opds-users',
+          token: 'allPerms',
+        },
+        [Permission.KomgaAccess]: {
+          method: 'GET',
+          path: '/komga-users',
           token: 'allPerms',
         },
         [Permission.BookDockAccess]: {
@@ -967,6 +994,89 @@ describe('Authorization matrix (e2e)', () => {
       });
       expect(response.statusCode).toBe(200);
       expect(response.headers['content-type']).toContain('image/jpeg');
+    });
+  });
+
+  describe('custom public guards - komga', () => {
+    async function setKomgaApiEnabled(enabled: boolean): Promise<void> {
+      const response = await ctx.app.inject({
+        method: 'PATCH',
+        url: '/api/v1/app-settings/komga_api_enabled',
+        headers: authHeader(personas.appSettingsAdmin.accessToken),
+        payload: { value: String(enabled) },
+      });
+      expect(response.statusCode).toBe(200);
+    }
+
+    it('rejects every Komga route while the API is disabled', async () => {
+      await setKomgaApiEnabled(false);
+      try {
+        const response = await ctx.app.inject({
+          method: 'GET',
+          url: '/api/v1/komga/api/v1/libraries',
+          headers: { authorization: basicAuth(komgaValidCreds.username, komgaValidCreds.password) },
+        });
+        expectError(response, 403, 'Komga API is disabled');
+      } finally {
+        await setKomgaApiEnabled(true);
+      }
+    });
+
+    it('challenges Komga routes without Basic credentials', async () => {
+      const response = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga/api/v2/users/me' });
+      expectError(response, 401, 'Basic authentication required');
+      expect(response.headers['www-authenticate']).toBe('Basic realm="bookorbit Komga"');
+    });
+
+    it('rejects invalid Komga credentials', async () => {
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/komga/api/v1/libraries',
+        headers: { authorization: basicAuth(komgaValidCreds.username, 'WrongPassword123') },
+      });
+      expectError(response, 401, 'Invalid credentials');
+      expect(response.headers['www-authenticate']).toBe('Basic realm="bookorbit Komga"');
+    });
+
+    it('rejects Komga accounts whose parent user is disabled', async () => {
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/komga/api/v1/libraries',
+        headers: { authorization: basicAuth(komgaDisabledCreds.username, komgaDisabledCreds.password) },
+      });
+      expectError(response, 401, 'disabled');
+    });
+
+    it('rejects Komga accounts when the parent permission is revoked', async () => {
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/komga/api/v1/libraries',
+        headers: { authorization: basicAuth(komgaRevokedCreds.username, komgaRevokedCreds.password) },
+      });
+      expectError(response, 403, 'Komga access revoked');
+    });
+
+    it('allows Komga routes with valid credentials and limits them to accessible libraries', async () => {
+      const response = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/komga/api/v1/libraries',
+        headers: { authorization: basicAuth(komgaValidCreds.username, komgaValidCreds.password) },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual([expect.objectContaining({ id: String(libraryA.libraryId), root: '' })]);
+
+      const hidden = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/komga/api/v1/libraries/${libraryB.libraryId}`,
+        headers: { authorization: basicAuth(komgaValidCreds.username, komgaValidCreds.password) },
+      });
+      expectError(hidden, 403, 'No access to this library');
+    });
+
+    it('answers unknown Komga paths with a JSON 404 without requiring credentials', async () => {
+      const response = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga/api/v1/settings' });
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual(expect.objectContaining({ status: 404, error: 'Not Found' }));
     });
   });
 

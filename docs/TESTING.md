@@ -139,6 +139,7 @@ check that your env vars match the values in `server/.env.example`.
 | `library-admin-workflows`         | full  | dedicated-db | 60 min  | Library create/update/delete admin workflows                                                                          |
 | `reader-format-delivery`          | full  | dedicated-db | 60 min  | Book file serving and format delivery                                                                                 |
 | `opds-auth-catalog`               | full  | dedicated-db | 45 min  | OPDS feed authentication and catalog structure                                                                        |
+| `komga-api`                       | full  | dedicated-db | 45 min  | Komga-compatible API: accounts, browsing, page streaming                                                              |
 | `email-lifecycle`                 | full  | dedicated-db | 45 min  | Email provider, template, and send lifecycle                                                                          |
 | `reader-state-isolation`          | full  | dedicated-db | 45 min  | Reading progress, bookmarks, and annotations isolated per user                                                        |
 | `users-admin-lifecycle`           | full  | dedicated-db | 50 min  | User create/update/delete admin lifecycle                                                                             |

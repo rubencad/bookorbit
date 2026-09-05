@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { hash } from 'bcryptjs';
 import fastifyCookie from '@fastify/cookie';
+import { ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { mkdir } from 'fs/promises';
@@ -9,6 +10,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DEFAULT_FORMAT_PRIORITY, type Permission } from '@bookorbit/types';
 
 import { AppModule } from '../../../src/app.module';
+import { GlobalExceptionFilter } from '../../../src/common/filters/http-exception.filter';
 import { DB } from '../../../src/db';
 import * as schema from '../../../src/db/schema';
 import { MetadataService } from '../../../src/modules/metadata/metadata.service';
@@ -68,7 +70,11 @@ export function basicAuth(username: string, password: string): string {
   return `Basic ${value}`;
 }
 
-export async function createOpdsE2EContext(): Promise<OpdsE2EContext> {
+export interface OpdsE2EContextOptions {
+  excludeFromGlobalPrefix?: string[];
+}
+
+export async function createOpdsE2EContext(options: OpdsE2EContextOptions = {}): Promise<OpdsE2EContext> {
   const fixture = await createOpdsFixtureRoot();
   const envSnapshot: EnvSnapshot = {
     appDataPath: process.env.APP_DATA_PATH,
@@ -84,7 +90,9 @@ export async function createOpdsE2EContext(): Promise<OpdsE2EContext> {
     .compile();
 
   const app = moduleFixture.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', options.excludeFromGlobalPrefix ? { exclude: options.excludeFromGlobalPrefix } : undefined);
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  app.useGlobalFilters(new GlobalExceptionFilter());
   await app.register(fastifyCookie as never);
   await app.init();
   await app.getHttpAdapter().getInstance().ready();

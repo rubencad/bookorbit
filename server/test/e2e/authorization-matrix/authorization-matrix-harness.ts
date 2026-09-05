@@ -138,6 +138,7 @@ export async function createAuthorizationMatrixE2EContext(): Promise<Authorizati
   await setSettingValue(db, 'book_dock_auto_fetch_metadata', 'false');
   await setSettingValue(db, 'book_dock_auto_finalize_enabled', 'false');
   await setSettingValue(db, 'opds_enabled', 'true');
+  await setSettingValue(db, 'komga_api_enabled', 'true');
 
   return {
     app,
@@ -393,6 +394,30 @@ export async function createOpdsUser(
       username,
       passwordHash,
       sortOrder: input.sortOrder ?? 'recent',
+    })
+    .returning();
+
+  return { row, password };
+}
+
+export async function createKomgaUser(
+  ctx: AuthorizationMatrixE2EContext,
+  input: {
+    userId: number;
+    username?: string;
+    password?: string;
+  },
+): Promise<{ row: typeof schema.komgaUsers.$inferSelect; password: string }> {
+  const username = input.username ?? `komga-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const password = input.password ?? 'KomgaPassword123';
+  const passwordHash = await hash(password, TEST_PASSWORD_HASH_ROUNDS);
+
+  const [row] = await ctx.db
+    .insert(schema.komgaUsers)
+    .values({
+      userId: input.userId,
+      username,
+      passwordHash,
     })
     .returning();
 
