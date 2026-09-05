@@ -86,6 +86,8 @@ export const bookFiles = pgTable(
     durationSeconds: integer('duration_seconds'),
     // null means "not determined yet"; rows predating this column are backfilled lazily on Kobo sync.
     isFixedLayout: boolean('is_fixed_layout'),
+    // null means "not counted yet"; comic files are counted by the scanner and lazily on first page request.
+    pageCount: integer('page_count'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .defaultNow()
@@ -111,6 +113,7 @@ export const bookFiles = pgTable(
     check('book_files_role_chk', sql`${t.role} in ('content', 'cover', 'metadata', 'supplement')`),
     check('book_files_size_bytes_nonnegative_chk', sql`${t.sizeBytes} is null or ${t.sizeBytes} >= 0`),
     check('book_files_duration_seconds_nonnegative_chk', sql`${t.durationSeconds} is null or ${t.durationSeconds} >= 0`),
+    check('book_files_page_count_nonnegative_chk', sql`${t.pageCount} is null or ${t.pageCount} >= 0`),
   ],
 );
 
