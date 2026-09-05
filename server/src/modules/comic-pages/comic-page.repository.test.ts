@@ -44,7 +44,7 @@ describe('ComicPageRepository', () => {
     const select = vi.fn().mockReturnValue({ from });
     const repository = new ComicPageRepository({ select } as any);
 
-    await expect(repository.findUncountedFiles(7, 500)).resolves.toEqual(rows);
+    await expect(repository.findFilesMissingPageInfo(7, 500)).resolves.toEqual(rows);
 
     const query = new PgDialect().sqlToQuery(where.mock.calls[0][0]);
     expect(query.sql).toContain('"book_files"."library_folder_id" = $1');

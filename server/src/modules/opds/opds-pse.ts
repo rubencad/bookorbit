@@ -5,8 +5,7 @@ export const OPDS_PSE_STREAM_REL = 'http://vaemendis.net/opds-pse/stream';
 
 const PSE_STREAM_FORMATS: ReadonlySet<string> = new Set<ComicPageImageFormat>(['jpeg', 'png']);
 
-// One stream link describes every page of a comic, so only an archive whose pages already share a
-// type the extension permits streams natively; every other archive is served as JPEG.
+// A PSE link declares one type for the whole archive. Use JPEG for mixed or unsupported pages.
 export function pseStreamFormat(pageMediaType: string | null): ComicPageImageFormat {
   return pageMediaType === 'image/png' ? 'png' : 'jpeg';
 }

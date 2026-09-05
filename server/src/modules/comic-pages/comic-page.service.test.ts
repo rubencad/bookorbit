@@ -35,7 +35,7 @@ async function readStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 describe('ComicPageService', () => {
   let root: string;
-  let repository: { updatePageCount: ReturnType<typeof vi.fn>; findUncountedFiles: ReturnType<typeof vi.fn> };
+  let repository: { updatePageCount: ReturnType<typeof vi.fn>; findFilesMissingPageInfo: ReturnType<typeof vi.fn> };
   let service: ComicPageService;
   let nextFileId = 1;
 
@@ -56,7 +56,7 @@ describe('ComicPageService', () => {
   });
 
   beforeEach(() => {
-    repository = { updatePageCount: vi.fn().mockResolvedValue(undefined), findUncountedFiles: vi.fn().mockResolvedValue([]) };
+    repository = { updatePageCount: vi.fn().mockResolvedValue(undefined), findFilesMissingPageInfo: vi.fn().mockResolvedValue([]) };
     service = new ComicPageService(repository as any);
   });
 
@@ -291,11 +291,11 @@ describe('ComicPageService', () => {
       const brokenPath = join(root, 'backfill/broken.cbr');
       await writeFile(brokenPath, Buffer.from('this is not a rar archive'));
       const broken = fileRef(brokenPath, 'cbr');
-      repository.findUncountedFiles.mockResolvedValue([readable, broken]);
+      repository.findFilesMissingPageInfo.mockResolvedValue([readable, broken]);
 
       await expect(service.backfillPageCounts(7, 10)).resolves.toEqual({ attempted: 2, counted: 1, failed: 1, moreRemaining: false });
 
-      expect(repository.findUncountedFiles).toHaveBeenCalledWith(7, 11);
+      expect(repository.findFilesMissingPageInfo).toHaveBeenCalledWith(7, 11);
       expect(repository.updatePageCount).toHaveBeenCalledWith(readable.id, 2, 'image/*');
       expect(repository.updatePageCount).toHaveBeenCalledWith(broken.id, null, null);
     });
@@ -304,7 +304,7 @@ describe('ComicPageService', () => {
       const files = await Promise.all(
         ['one', 'two', 'three'].map(async (name) => fileRef(await createCbzComicFixture(root, `backfill/${name}.cbz`, TWO_PAGE_ENTRIES), 'cbz')),
       );
-      repository.findUncountedFiles.mockResolvedValue(files);
+      repository.findFilesMissingPageInfo.mockResolvedValue(files);
 
       await expect(service.backfillPageCounts(7, 2)).resolves.toEqual({ attempted: 2, counted: 2, failed: 0, moreRemaining: true });
 

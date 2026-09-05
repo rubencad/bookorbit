@@ -425,7 +425,7 @@ describe('OpdsService', () => {
       expect(link).not.toContain('&maxWidth');
     });
 
-    it('parses as a link element carrying the pse attributes', () => {
+    it('produces a valid XML link with PSE attributes', () => {
       const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
       const feed = parser.parse(acquisitionFeed([sampleComic()])) as { feed: { entry: { link: Record<string, string>[] } } };
       const stream = feed.feed.entry.link.find((link) => link.rel === 'http://vaemendis.net/opds-pse/stream')!;

@@ -141,7 +141,7 @@ export class ComicPageService {
 
   async backfillPageCounts(libraryFolderId: number, limit: number): Promise<ComicPageCountBackfill> {
     const startedAt = Date.now();
-    const candidates = await this.repository.findUncountedFiles(libraryFolderId, limit + 1);
+    const candidates = await this.repository.findFilesMissingPageInfo(libraryFolderId, limit + 1);
     const files = candidates.slice(0, limit);
     const result: ComicPageCountBackfill = { attempted: files.length, counted: 0, failed: 0, moreRemaining: candidates.length > limit };
 

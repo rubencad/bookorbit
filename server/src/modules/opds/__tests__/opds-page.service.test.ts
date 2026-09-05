@@ -26,7 +26,7 @@ describe('OpdsPageService', () => {
       expect(opdsBookService.getComicFile).toHaveBeenCalledWith(42, 7);
     });
 
-    it('answers 404 when the book has no matching comic file', async () => {
+    it('returns 404 when the book has no matching comic file', async () => {
       const { service, opdsBookService } = makeService();
       opdsBookService.getComicFile.mockResolvedValue(null);
 
@@ -49,7 +49,7 @@ describe('OpdsPageService', () => {
       ]);
     });
 
-    it('passes PNG pages through for a PNG link and converts the rest to PNG', async () => {
+    it('serves every page as PNG when the archive is advertised as PNG', async () => {
       const { service, comicPageService } = makeService([{ mimeType: 'image/png' }, { mimeType: 'image/jpeg' }]);
 
       await service.streamPage(FILE, 0, 'png', 1200);
@@ -73,7 +73,7 @@ describe('OpdsPageService', () => {
       ]);
     });
 
-    it('answers 404 for pages outside the archive without opening a page', async () => {
+    it('returns 404 for pages outside the archive without opening a page', async () => {
       const { service, comicPageService } = makeService();
 
       await expect(service.streamPage(FILE, 3, 'jpeg')).rejects.toThrow(new NotFoundException('Page 3 out of range'));

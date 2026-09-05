@@ -368,7 +368,7 @@ describe('OpdsController', () => {
   describe('page streaming', () => {
     const user = { userId: 2, isSuperuser: false, contentFilters: { rules: [] } } as never;
 
-    it('checks book access, resolves the requested file, and streams the page with cache headers', async () => {
+    it('streams an authorized page with cache headers', async () => {
       const { controller, opdsBookService, opdsPageService } = makeController();
       const reply = makeReply();
 
@@ -384,7 +384,7 @@ describe('OpdsController', () => {
       expect(reply.send).toHaveBeenCalledWith({ kind: 'page-stream' });
     });
 
-    it('treats absent and empty query values as no file id, no width, and a JPEG link', async () => {
+    it('treats missing and empty page query parameters as unset', async () => {
       const { controller, opdsPageService } = makeController();
 
       await controller.page(42, 0, user, makeReply(), '', '', '');
@@ -403,7 +403,7 @@ describe('OpdsController', () => {
       expect(opdsPageService.resolveComicFile).not.toHaveBeenCalled();
     });
 
-    it('answers 304 when the ETag matches without opening the archive', async () => {
+    it('returns 304 without opening the archive when the ETag matches', async () => {
       const { controller, opdsPageService } = makeController();
       const reply = makeReply();
 
@@ -414,7 +414,7 @@ describe('OpdsController', () => {
       expect(opdsPageService.streamPage).not.toHaveBeenCalled();
     });
 
-    it('sends no ETag when the file modification time is unknown', async () => {
+    it('omits the ETag when mtime is unknown', async () => {
       const { controller, opdsPageService } = makeController();
       opdsPageService.resolveComicFile.mockResolvedValue({
         id: 7,
@@ -433,7 +433,7 @@ describe('OpdsController', () => {
       expect(reply.send).toHaveBeenCalledWith({ kind: 'page-stream' });
     });
 
-    it('rejects widths that are not positive integers within the limit', async () => {
+    it('rejects invalid maxWidth values', async () => {
       const { controller, opdsPageService } = makeController();
 
       await expect(controller.page(42, 0, user, makeReply(), undefined, '0')).rejects.toThrow(BadRequestException);

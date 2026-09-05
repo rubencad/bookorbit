@@ -21,7 +21,7 @@ describe('BasicCredentialCache', () => {
     expect(cache.get('bookorbit Komga', 'reader', 'secret')).toBeNull();
   });
 
-  it('forgets a credential once its time to live has passed', () => {
+  it('expires credentials after the TTL', () => {
     const cache = new BasicCredentialCache();
     cache.set(REALM, 'reader', 'secret', { accountId: 10, userId: 1 });
 
@@ -57,7 +57,7 @@ describe('BasicCredentialCache', () => {
     expect(cache.get(REALM, 'newcomer', 'secret')).not.toBeNull();
   });
 
-  it('drops every credential of an invalidated account within its realm', () => {
+  it("invalidates an account's cached credentials for one realm", () => {
     const cache = new BasicCredentialCache();
     cache.set(REALM, 'reader', 'secret', { accountId: 10, userId: 1 });
     cache.set(REALM, 'reader', 'secret-with-colon:', { accountId: 10, userId: 1 });

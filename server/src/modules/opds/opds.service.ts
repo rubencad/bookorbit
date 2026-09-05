@@ -224,10 +224,7 @@ export class OpdsService {
     return lines.join('\n');
   }
 
-  // Page streaming clients substitute {pageNumber} and {maxWidth} themselves, so both
-  // placeholders must reach the feed exactly as written. The output type travels in the URL so a
-  // feed a client already holds keeps matching what the page route returns, even after the stored
-  // page type of the archive changes.
+  // Clients replace the page placeholders; type stays fixed so cached links keep their response format.
   private pageStreamLink(book: OpdsBookEntry): string | null {
     const comicFile = book.comicFile;
     if (!comicFile || comicFile.pageCount === null || comicFile.pageCount <= 0) return null;

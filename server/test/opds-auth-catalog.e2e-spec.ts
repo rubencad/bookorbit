@@ -90,7 +90,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
   let hiddenBook!: LocatedBookFile;
   let rawFb2Book!: LocatedBookFile;
   let visibleComic!: LocatedBookFile;
-  let uniformComic!: LocatedBookFile;
+  let pngComic!: LocatedBookFile;
   let hiddenComic!: LocatedBookFile;
   let widePagePng!: Buffer;
   let rawFb2FixtureContent!: string;
@@ -145,7 +145,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       { path: '.hidden/004-secret.png', content: COMIC_PAGE_PNG },
     ];
     const visibleComicPath = await createCbzComicFixture(comicLibrary.folderPath, 'visible-comic.cbz', comicPages);
-    const uniformComicPath = await createCbzComicFixture(comicLibrary.folderPath, 'uniform-comic.cbz', [
+    const pngComicPath = await createCbzComicFixture(comicLibrary.folderPath, 'uniform-comic.cbz', [
       { path: 'pages/001-wide.png', content: widePagePng },
       { path: 'pages/002-dot.png', content: COMIC_PAGE_PNG },
     ]);
@@ -161,7 +161,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
     hiddenBook = await locateBookByAbsolutePath(ctx, hiddenGammaPath);
     rawFb2Book = await locateBookByAbsolutePath(ctx, rawFb2Path);
     visibleComic = await locateBookByAbsolutePath(ctx, visibleComicPath);
-    uniformComic = await locateBookByAbsolutePath(ctx, uniformComicPath);
+    pngComic = await locateBookByAbsolutePath(ctx, pngComicPath);
     hiddenComic = await locateBookByAbsolutePath(ctx, hiddenComicPath);
     visibleAlphaAlternativeFileIds = {
       mobi: await attachContentFileToBook(
@@ -488,7 +488,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expectError(response, 401, 'Invalid token');
     });
 
-    it('stops accepting the credentials of a deleted OPDS account that had just authenticated', async () => {
+    it('rejects cached credentials after deleting the OPDS account', async () => {
       const credentials = { username: `opds-deleted-${randomUUID().slice(0, 8)}`, password: 'DeletedOpdsPass123' };
       const createResponse = await ctx.app.inject({
         method: 'POST',
@@ -753,7 +753,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
     const pagePath = (pageIndex: number, query = '', comic: LocatedBookFile = visibleComic, type: 'jpeg' | 'png' = 'jpeg') =>
       `/api/v1/opds/${comic.bookId}/pages/${pageIndex}?fileId=${comic.bookFileId}&type=${type}${query}`;
 
-    it('advertises a stream link carrying the page count, the reader progress, and unescaped placeholders', async () => {
+    it('advertises page count, reader progress, and URI template placeholders', async () => {
       const response = await opdsGet(comicCatalogPath(), comicReaderCredentials);
       expect(response.statusCode).toBe(200);
       expect(response.body).toContain('xmlns:pse="http://vaemendis.net/opds-pse/ns"');
@@ -776,20 +776,20 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expect(epubCatalog.body).not.toContain('opds-pse/stream');
     });
 
-    it('advertises the shared page type of an all-PNG comic and JPEG for a mixed one', async () => {
+    it('advertises PNG for all-PNG comics and JPEG for mixed comics', async () => {
       const rows = await ctx.db
         .select({ id: schema.bookFiles.id, pageCount: schema.bookFiles.pageCount, pageMediaType: schema.bookFiles.pageMediaType })
         .from(schema.bookFiles)
-        .where(inArray(schema.bookFiles.id, [visibleComic.bookFileId, uniformComic.bookFileId]));
+        .where(inArray(schema.bookFiles.id, [visibleComic.bookFileId, pngComic.bookFileId]));
       expect(rows.find((row) => row.id === visibleComic.bookFileId)).toMatchObject({ pageCount: 3, pageMediaType: 'image/*' });
-      expect(rows.find((row) => row.id === uniformComic.bookFileId)).toMatchObject({ pageCount: 2, pageMediaType: 'image/png' });
+      expect(rows.find((row) => row.id === pngComic.bookFileId)).toMatchObject({ pageCount: 2, pageMediaType: 'image/png' });
 
       const response = await opdsGet(comicCatalogPath(), comicReaderCredentials);
       expect(response.statusCode).toBe(200);
       expect(streamLink(response.body, visibleComic.bookId)).toContain('type="image/jpeg"');
-      const uniformLink = streamLink(response.body, uniformComic.bookId);
+      const uniformLink = streamLink(response.body, pngComic.bookId);
       expect(uniformLink).toContain('type="image/png"');
-      expect(uniformLink).toContain(`?fileId=${uniformComic.bookFileId}&amp;type=png&amp;maxWidth={maxWidth}"`);
+      expect(uniformLink).toContain(`?fileId=${pngComic.bookFileId}&amp;type=png&amp;maxWidth={maxWidth}"`);
       expect(uniformLink).toContain('pse:count="2"');
     });
 
@@ -802,7 +802,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expect(link).not.toContain('pse:lastRead');
     });
 
-    it('streams zero-based pages as the advertised type, transcoding pages that differ from it', async () => {
+    it('streams zero-based pages using the advertised media type', async () => {
       const first = await opdsGet(pagePath(0), comicReaderCredentials);
       expect(first.statusCode).toBe(200);
       expect(first.headers['content-type']).toContain('image/jpeg');
@@ -822,7 +822,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       const thirdMetadata = await sharp(responseBuffer(third)).metadata();
       expect([thirdMetadata.format, thirdMetadata.width, thirdMetadata.height]).toEqual(['jpeg', 4, 4]);
 
-      const uniformFirst = await opdsGet(pagePath(0, '', uniformComic, 'png'), comicReaderCredentials);
+      const uniformFirst = await opdsGet(pagePath(0, '', pngComic, 'png'), comicReaderCredentials);
       expect(uniformFirst.statusCode).toBe(200);
       expect(uniformFirst.headers['content-type']).toContain('image/png');
       expect(responseBuffer(uniformFirst)).toEqual(widePagePng);
@@ -848,7 +848,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expect(notModified.statusCode).toBe(304);
     });
 
-    it('resizes pages to maxWidth without enlarging and rejects widths outside the limit', async () => {
+    it('downscales pages without upscaling and rejects invalid maxWidth values', async () => {
       const shrunk = await opdsGet(pagePath(0, '&maxWidth=4'), comicReaderCredentials);
       expect(shrunk.statusCode).toBe(200);
       expect(shrunk.headers['content-type']).toContain('image/jpeg');
@@ -860,7 +860,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expect(untouched.statusCode).toBe(200);
       expect((await sharp(responseBuffer(untouched)).metadata()).width).toBe(8);
 
-      const shrunkPng = await opdsGet(pagePath(0, '&maxWidth=4', uniformComic, 'png'), comicReaderCredentials);
+      const shrunkPng = await opdsGet(pagePath(0, '&maxWidth=4', pngComic, 'png'), comicReaderCredentials);
       expect(shrunkPng.statusCode).toBe(200);
       expect(shrunkPng.headers['content-type']).toContain('image/png');
       const shrunkPngMetadata = await sharp(responseBuffer(shrunkPng)).metadata();
@@ -871,7 +871,7 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expectError(await opdsGet(pagePath(0, '&maxWidth=4097'), comicReaderCredentials), 400, 'maxWidth must be between 1 and 4096');
     });
 
-    it('refuses pages of books outside the reader libraries, of non-comic files, and of foreign file ids', async () => {
+    it('rejects inaccessible books and invalid comic file ids', async () => {
       const hidden = await opdsGet(`/api/v1/opds/${hiddenComic.bookId}/pages/0?fileId=${hiddenComic.bookFileId}`, comicReaderCredentials);
       expectError(hidden, 403, 'No access to this book');
 
@@ -887,16 +887,16 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expectError(tokenResponse, 401, 'Basic authentication required');
     });
 
-    it('keeps a fetched feed consistent while a comic counted before the media type existed is recounted', async () => {
-      await ctx.db.update(schema.bookFiles).set({ pageMediaType: null }).where(eq(schema.bookFiles.id, uniformComic.bookFileId));
+    it('keeps a fetched stream link stable while its media type is backfilled', async () => {
+      await ctx.db.update(schema.bookFiles).set({ pageMediaType: null }).where(eq(schema.bookFiles.id, pngComic.bookFileId));
 
       const before = await opdsGet(comicCatalogPath(), comicReaderCredentials);
       expect(before.statusCode).toBe(200);
-      const staleLink = streamLink(before.body, uniformComic.bookId);
+      const staleLink = streamLink(before.body, pngComic.bookId);
       expect(staleLink).toContain('type="image/jpeg"');
       expect(staleLink).toContain('&amp;type=jpeg&amp;');
 
-      const throughStaleLink = await opdsGet(pagePath(0, '', uniformComic, 'jpeg'), comicReaderCredentials);
+      const throughStaleLink = await opdsGet(pagePath(0, '', pngComic, 'jpeg'), comicReaderCredentials);
       expect(throughStaleLink.statusCode).toBe(200);
       expect(throughStaleLink.headers['content-type']).toContain('image/jpeg');
       expect((await sharp(responseBuffer(throughStaleLink)).metadata()).format).toBe('jpeg');
@@ -905,18 +905,18 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
         const [row] = await ctx.db
           .select({ pageMediaType: schema.bookFiles.pageMediaType })
           .from(schema.bookFiles)
-          .where(eq(schema.bookFiles.id, uniformComic.bookFileId));
+          .where(eq(schema.bookFiles.id, pngComic.bookFileId));
         expect(row.pageMediaType).toBe('image/png');
       });
 
       const after = await opdsGet(comicCatalogPath(), comicReaderCredentials);
-      const freshLink = streamLink(after.body, uniformComic.bookId);
+      const freshLink = streamLink(after.body, pngComic.bookId);
       expect(freshLink).toContain('type="image/png"');
       expect(freshLink).toContain('&amp;type=png&amp;');
 
-      const throughStaleLinkAgain = await opdsGet(pagePath(0, '', uniformComic, 'jpeg'), comicReaderCredentials);
+      const throughStaleLinkAgain = await opdsGet(pagePath(0, '', pngComic, 'jpeg'), comicReaderCredentials);
       expect(throughStaleLinkAgain.headers['content-type']).toContain('image/jpeg');
-      const throughFreshLink = await opdsGet(pagePath(0, '', uniformComic, 'png'), comicReaderCredentials);
+      const throughFreshLink = await opdsGet(pagePath(0, '', pngComic, 'png'), comicReaderCredentials);
       expect(throughFreshLink.headers['content-type']).toContain('image/png');
       expect(responseBuffer(throughFreshLink)).toEqual(widePagePng);
     });

@@ -139,7 +139,7 @@ describe('OpdsUserService', () => {
   });
 
   describe('delete', () => {
-    it('deletes an owned OPDS user and forgets its cached credentials', async () => {
+    it('deletes an OPDS user and invalidates its cached credentials', async () => {
       db.query.opdsUsers.findFirst.mockResolvedValue({ id: 10, userId: 5 });
 
       await expect(service.delete(5, 10)).resolves.toBeUndefined();

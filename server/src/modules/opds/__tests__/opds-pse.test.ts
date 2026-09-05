@@ -1,7 +1,7 @@
 import { isPseStreamFormat, pseConversionFor, pseStreamFormat, pseStreamType } from '../opds-pse';
 
 describe('pseStreamFormat', () => {
-  it('streams all-PNG archives as PNG', () => {
+  it('uses PNG for all-PNG archives', () => {
     expect(pseStreamFormat('image/png')).toBe('png');
   });
 
@@ -15,7 +15,7 @@ describe('pseStreamFormat', () => {
 });
 
 describe('pseStreamType', () => {
-  it('maps a stream format to its media type', () => {
+  it('maps stream formats to media types', () => {
     expect(pseStreamType('jpeg')).toBe('image/jpeg');
     expect(pseStreamType('png')).toBe('image/png');
   });
