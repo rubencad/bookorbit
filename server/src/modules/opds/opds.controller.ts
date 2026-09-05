@@ -29,6 +29,7 @@ import { OpdsEnabledGuard } from './opds-enabled.guard';
 import { OpdsUser } from './opds-user.decorator';
 import { OpdsBookService } from './opds-book.service';
 import { OPDS_PAGE_MAX_WIDTH, OpdsPageService } from './opds-page.service';
+import { isPseStreamFormat } from './opds-pse';
 import { OpdsService } from './opds.service';
 import { BookService } from '../book/book.service';
 
@@ -300,6 +301,7 @@ export class OpdsController {
     @Res() reply: FastifyReply,
     @Query('fileId') fileIdStr?: string,
     @Query('maxWidth') maxWidthStr?: string,
+    @Query('type') typeStr?: string,
     @Headers('if-none-match') ifNoneMatch?: string,
   ) {
     await this.opdsBookService.validateBookAccess(bookId, user.userId, user.isSuperuser, user.contentFilters);
@@ -308,16 +310,20 @@ export class OpdsController {
     if (maxWidth !== undefined && maxWidth > OPDS_PAGE_MAX_WIDTH) {
       throw new BadRequestException(`maxWidth must be between 1 and ${OPDS_PAGE_MAX_WIDTH}`);
     }
+    const format = typeStr || 'jpeg';
+    if (!isPseStreamFormat(format)) {
+      throw new BadRequestException('type must be jpeg or png');
+    }
 
     const file = await this.opdsPageService.resolveComicFile(bookId, fileId);
-    const etag = file.mtime ? `"${file.id}-${file.mtime.getTime()}-${pageIndex}-${maxWidth ?? 0}"` : undefined;
+    const etag = file.mtime ? `"${file.id}-${file.mtime.getTime()}-${pageIndex}-${format}-${maxWidth ?? 0}"` : undefined;
     reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
     if (etag && ifNoneMatch === etag) {
       reply.status(304).send();
       return;
     }
 
-    const { stream, mimeType } = await this.opdsPageService.streamPage(file, pageIndex, maxWidth);
+    const { stream, mimeType } = await this.opdsPageService.streamPage(file, pageIndex, format, maxWidth);
     reply.header('Cache-Control', 'private, max-age=86400');
     if (etag) reply.header('ETag', etag);
     reply.type(mimeType);

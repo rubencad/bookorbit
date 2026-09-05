@@ -399,6 +399,24 @@ describe('OpdsBookService', () => {
         pageMediaType: null,
       });
     });
+
+    it('queues a recount for comics counted before their page media type was recorded', async () => {
+      const fileRows = [
+        { bookId: 1, id: 12, format: 'cbz', role: 'content', pageCount: 24, pageMediaType: null, absolutePath: '/books/comic-1/a.cbz' },
+      ];
+      const { service, comicPageService } = makeService([[metaRow(1)], [], fileRows, []]);
+
+      const [entry] = (await testable(service).fetchBookEntries([1], { userId: 7 })) as { comicFile: unknown }[];
+
+      expect(entry).toMatchObject({ comicFile: { id: 12, format: 'cbz', pageCount: 24, pageMediaType: null } });
+      expect(comicPageService.queuePageCount).toHaveBeenCalledWith({
+        id: 12,
+        absolutePath: '/books/comic-1/a.cbz',
+        format: 'cbz',
+        pageCount: 24,
+        pageMediaType: null,
+      });
+    });
   });
 
   describe('getComicFile', () => {

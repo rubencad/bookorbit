@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { OPDS_PSE_NAMESPACE, OPDS_PSE_STREAM_REL, pseStreamType } from './opds-pse';
+import { OPDS_PSE_NAMESPACE, OPDS_PSE_STREAM_REL, pseStreamFormat, pseStreamType } from './opds-pse';
 import {
   esc,
   fileMimeType,
@@ -225,7 +225,9 @@ export class OpdsService {
   }
 
   // Page streaming clients substitute {pageNumber} and {maxWidth} themselves, so both
-  // placeholders must reach the feed exactly as written.
+  // placeholders must reach the feed exactly as written. The output type travels in the URL so a
+  // feed a client already holds keeps matching what the page route returns, even after the stored
+  // page type of the archive changes.
   private pageStreamLink(book: OpdsBookEntry): string | null {
     const comicFile = book.comicFile;
     if (!comicFile || comicFile.pageCount === null || comicFile.pageCount <= 0) return null;
@@ -237,8 +239,9 @@ export class OpdsService {
       attributes['pse:lastReadDate'] = toRfc3339Seconds(book.progress.lastReadAt);
     }
 
-    const href = `${BASE}/${book.id}/pages/{pageNumber}?fileId=${comicFile.id}&maxWidth={maxWidth}`;
-    return xmlLink(OPDS_PSE_STREAM_REL, href, pseStreamType(comicFile.pageMediaType), undefined, attributes);
+    const format = pseStreamFormat(comicFile.pageMediaType);
+    const href = `${BASE}/${book.id}/pages/{pageNumber}?fileId=${comicFile.id}&type=${format}&maxWidth={maxWidth}`;
+    return xmlLink(OPDS_PSE_STREAM_REL, href, pseStreamType(format), undefined, attributes);
   }
 
   // Both links are needed. Compliant clients follow the OpenSearch description; Moon+ Reader

@@ -915,7 +915,7 @@ export class OpdsBookService {
     }
 
     const progressByFile = await this.fetchComicProgress([...comicFileByBook.values()], options.userId);
-    this.queueMissingPageCounts([...comicFileByBook.values()]);
+    this.queueIncompletePageInfo([...comicFileByBook.values()]);
 
     const idOrder = new Map(bookIds.map((id, i) => [id, i]));
     const contextSeriesByBook = new Map(contextSeriesRows.map((row) => [row.bookId, row]));
@@ -968,15 +968,15 @@ export class OpdsBookService {
     return new Map(rows.map((row) => [row.bookFileId, { pageNumber: row.pageNumber, lastReadAt: row.lastReadAt }]));
   }
 
-  private queueMissingPageCounts(comicFiles: ComicFileRow[]): void {
+  private queueIncompletePageInfo(comicFiles: ComicFileRow[]): void {
     for (const file of comicFiles) {
-      if (file.pageCount !== null) continue;
+      if (file.pageCount !== null && file.pageMediaType !== null) continue;
       this.comicPageService.queuePageCount({
         id: file.id,
         absolutePath: file.absolutePath,
         format: file.format,
-        pageCount: null,
-        pageMediaType: null,
+        pageCount: file.pageCount,
+        pageMediaType: file.pageMediaType,
       });
     }
   }

@@ -372,32 +372,42 @@ describe('OpdsController', () => {
       const { controller, opdsBookService, opdsPageService } = makeController();
       const reply = makeReply();
 
-      await controller.page(42, 3, user, reply, '7', '800');
+      await controller.page(42, 3, user, reply, '7', '800', 'png');
 
       expect(opdsBookService.validateBookAccess).toHaveBeenCalledWith(42, 2, false, { rules: [] });
       expect(opdsPageService.resolveComicFile).toHaveBeenCalledWith(42, 7);
-      expect(opdsPageService.streamPage).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), 3, 800);
+      expect(opdsPageService.streamPage).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), 3, 'png', 800);
       expect(reply.header).toHaveBeenCalledWith('Cross-Origin-Resource-Policy', 'cross-origin');
       expect(reply.header).toHaveBeenCalledWith('Cache-Control', 'private, max-age=86400');
-      expect(reply.header).toHaveBeenCalledWith('ETag', '"7-5000-3-800"');
+      expect(reply.header).toHaveBeenCalledWith('ETag', '"7-5000-3-png-800"');
       expect(reply.type).toHaveBeenCalledWith('image/png');
       expect(reply.send).toHaveBeenCalledWith({ kind: 'page-stream' });
     });
 
-    it('treats absent and empty query values as no file id and no width', async () => {
+    it('treats absent and empty query values as no file id, no width, and a JPEG link', async () => {
       const { controller, opdsPageService } = makeController();
 
-      await controller.page(42, 0, user, makeReply(), '', '');
+      await controller.page(42, 0, user, makeReply(), '', '', '');
 
       expect(opdsPageService.resolveComicFile).toHaveBeenCalledWith(42, undefined);
-      expect(opdsPageService.streamPage).toHaveBeenCalledWith(expect.anything(), 0, undefined);
+      expect(opdsPageService.streamPage).toHaveBeenCalledWith(expect.anything(), 0, 'jpeg', undefined);
+    });
+
+    it('rejects a pinned type the link cannot advertise', async () => {
+      const { controller, opdsPageService } = makeController();
+
+      await expect(controller.page(42, 0, user, makeReply(), undefined, undefined, 'gif')).rejects.toThrow(
+        new BadRequestException('type must be jpeg or png'),
+      );
+      await expect(controller.page(42, 0, user, makeReply(), undefined, undefined, 'PNG')).rejects.toThrow(BadRequestException);
+      expect(opdsPageService.resolveComicFile).not.toHaveBeenCalled();
     });
 
     it('answers 304 when the ETag matches without opening the archive', async () => {
       const { controller, opdsPageService } = makeController();
       const reply = makeReply();
 
-      await controller.page(42, 3, user, reply, '7', undefined, '"7-5000-3-0"');
+      await controller.page(42, 3, user, reply, '7', undefined, undefined, '"7-5000-3-jpeg-0"');
 
       expect(reply.status).toHaveBeenCalledWith(304);
       expect(reply.send).toHaveBeenCalledWith();
@@ -416,7 +426,7 @@ describe('OpdsController', () => {
       });
       const reply = makeReply();
 
-      await controller.page(42, 0, user, reply, undefined, undefined, '"7-0-0-0"');
+      await controller.page(42, 0, user, reply, undefined, undefined, undefined, '"7-0-0-jpeg-0"');
 
       expect(reply.status).not.toHaveBeenCalledWith(304);
       expect(reply.header).not.toHaveBeenCalledWith('ETag', expect.anything());

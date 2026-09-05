@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
-import { ComicPageService, type ComicPageStream } from '../comic-pages/comic-page.service';
+import { ComicPageService, type ComicPageImageFormat, type ComicPageStream } from '../comic-pages/comic-page.service';
 import { OpdsBookService, type OpdsComicFileRef } from './opds-book.service';
-import { pseConversionFor, pseStreamType } from './opds-pse';
+import { pseConversionFor } from './opds-pse';
 
 export const OPDS_PAGE_MAX_WIDTH = 4096;
 
@@ -19,12 +19,11 @@ export class OpdsPageService {
     return file;
   }
 
-  async streamPage(file: OpdsComicFileRef, pageIndex: number, maxWidth?: number): Promise<ComicPageStream> {
+  async streamPage(file: OpdsComicFileRef, pageIndex: number, format: ComicPageImageFormat, maxWidth?: number): Promise<ComicPageStream> {
     const manifest = await this.comicPageService.getManifest(file);
     const page = pageIndex >= 0 ? manifest.pages[pageIndex] : undefined;
     if (!page) throw new NotFoundException(`Page ${pageIndex} out of range`);
 
-    const convert = pseConversionFor(pseStreamType(file.pageMediaType), page.mimeType);
-    return this.comicPageService.streamPage(file, pageIndex, { maxWidth, convert });
+    return this.comicPageService.streamPage(file, pageIndex, { maxWidth, convert: pseConversionFor(format, page.mimeType) });
   }
 }

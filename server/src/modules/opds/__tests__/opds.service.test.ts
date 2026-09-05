@@ -412,7 +412,7 @@ describe('OpdsService', () => {
       const link = streamLinkLine(acquisitionFeed([sampleComic()]));
 
       expect(link).toBe(
-        '  <link rel="http://vaemendis.net/opds-pse/stream" href="/api/v1/opds/42/pages/{pageNumber}?fileId=7&amp;maxWidth={maxWidth}" type="image/jpeg" pse:count="35" pse:lastRead="10" pse:lastReadDate="2026-01-10T10:01:11Z"/>',
+        '  <link rel="http://vaemendis.net/opds-pse/stream" href="/api/v1/opds/42/pages/{pageNumber}?fileId=7&amp;type=jpeg&amp;maxWidth={maxWidth}" type="image/jpeg" pse:count="35" pse:lastRead="10" pse:lastReadDate="2026-01-10T10:01:11Z"/>',
       );
     });
 
@@ -433,7 +433,7 @@ describe('OpdsService', () => {
       expect(stream['pse:count']).toBe('35');
       expect(stream['pse:lastRead']).toBe('10');
       expect(stream['pse:lastReadDate']).toBe('2026-01-10T10:01:11Z');
-      expect(stream.href).toBe('/api/v1/opds/42/pages/{pageNumber}?fileId=7&maxWidth={maxWidth}');
+      expect(stream.href).toBe('/api/v1/opds/42/pages/{pageNumber}?fileId=7&type=jpeg&maxWidth={maxWidth}');
     });
 
     it('omits the last read attributes without progress or when the reader has not turned a page', () => {
@@ -463,14 +463,16 @@ describe('OpdsService', () => {
       ).toBeUndefined();
     });
 
-    it('advertises PNG only when every page is PNG and JPEG for every other archive', () => {
-      const typeOf = (pageMediaType: string | null) =>
+    it('advertises PNG only when every page is PNG and JPEG for every other archive, pinning the type in the URL', () => {
+      const linkFor = (pageMediaType: string | null) =>
         streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: 35, pageMediaType } })]))!;
 
-      expect(typeOf('image/png')).toContain('type="image/png"');
-      expect(typeOf('image/jpeg')).toContain('type="image/jpeg"');
-      expect(typeOf(null)).toContain('type="image/jpeg"');
-      expect(typeOf('image/webp')).toContain('type="image/jpeg"');
+      expect(linkFor('image/png')).toContain('type="image/png"');
+      expect(linkFor('image/png')).toContain('&amp;type=png&amp;');
+      for (const pageMediaType of ['image/jpeg', 'image/*', null, 'image/webp']) {
+        expect(linkFor(pageMediaType)).toContain('type="image/jpeg"');
+        expect(linkFor(pageMediaType)).toContain('&amp;type=jpeg&amp;');
+      }
     });
 
     it('keeps the download link next to the stream link', () => {
