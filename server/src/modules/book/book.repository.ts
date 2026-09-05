@@ -1466,6 +1466,7 @@ export class BookRepository {
         fileHash: bookFiles.fileHash,
         sizeBytes: bookFiles.sizeBytes,
         durationSeconds: bookFiles.durationSeconds,
+        pageCount: bookFiles.pageCount,
       })
       .from(bookFiles)
       .innerJoin(books, eq(books.id, bookFiles.bookId))

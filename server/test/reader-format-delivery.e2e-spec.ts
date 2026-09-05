@@ -16,6 +16,13 @@ import {
   type ReaderStateIsolationE2EContext,
   type TestUserSession,
 } from './e2e/reader-state-isolation/reader-state-isolation-harness';
+import {
+  COMIC_PAGE_JPEG,
+  COMIC_PAGE_PNG,
+  createCb7ComicFixture,
+  createCbrComicFixture,
+  type ComicFixtureEntry,
+} from './e2e/comics/comic-fixture-builder';
 import { createEpubFixture, createZipArchiveFixture } from './e2e/reader-state-isolation/reader-state-isolation-fixture-builder';
 
 type InjectResponse = Awaited<ReturnType<ReaderStateIsolationE2EContext['app']['inject']>>;
@@ -23,11 +30,12 @@ type InjectResponse = Awaited<ReturnType<ReaderStateIsolationE2EContext['app']['
 const SCENARIO_TIMEOUT_MS = 120_000;
 const EPUB_STYLESHEET = 'body { background: #f5f1e8; color: #1f2937; }\nimg { max-width: 100%; }';
 const EPUB_BOOKMARKS = 'last-read=OPS/chapter.xhtml#intro';
-const PAGE_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cQpUAAAAASUVORK5CYII=', 'base64');
-const PAGE_JPEG = Buffer.from(
-  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBAQEA8QEA8QDw8QEA8PDw8QFREWFhURFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0OGhAQGy0lICUtLS8tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAgMBEQACEQEDEQH/xAAXAAEBAQEAAAAAAAAAAAAAAAABAgME/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEAMQAAAB6A//xAAYEAEAAwEAAAAAAAAAAAAAAAABABEhMf/aAAgBAQABBQJXJZ//xAAVEQEBAAAAAAAAAAAAAAAAAAABAP/aAAgBAwEBPwGn/8QAFREBAQAAAAAAAAAAAAAAAAAAARD/2gAIAQIBAT8Bp//EABgQAQADAQAAAAAAAAAAAAAAAAEAESEx/9oACAEBAAY/AhGQx//EABsQAQABBQEAAAAAAAAAAAAAAAERACExQVFh/9oACAEBAAE/IV2K4zGq4Jm1q//aAAwDAQACAAMAAAAQ8//EABcRAQEBAQAAAAAAAAAAAAAAAAEREDH/2gAIAQMBAT8Qw0f/xAAWEQEBAQAAAAAAAAAAAAAAAAABEBH/2gAIAQIBAT8QkL//xAAbEAEBAQADAQEAAAAAAAAAAAABEQAhMUFhcf/aAAgBAQABPxC4oLQ1M8JrIoYNewc19hXtOD87mpy4V/mQJu1WDVYj1WFJsbgx5caX//Z',
-  'base64',
-);
+const COMIC_PAGE_ENTRIES: ComicFixtureEntry[] = [
+  { path: 'pages/001-cover.png', content: COMIC_PAGE_PNG },
+  { path: 'pages/002-spread.jpg', content: COMIC_PAGE_JPEG },
+  { path: '.hidden/003-secret.png', content: COMIC_PAGE_PNG },
+  { path: 'notes/readme.txt', content: 'not a page' },
+];
 
 function responseMessage(response: { message?: string | string[] }): string {
   if (Array.isArray(response.message)) return response.message.join(' ');
@@ -95,7 +103,7 @@ async function createReaderDeliveryEpub(rootPath: string, relativePath: string, 
     { path: 'OPS/chapter.xhtml', content: chapterXml },
     { path: 'OPS/nav.xhtml', content: navXml },
     { path: 'OPS/styles/reader style.css', content: EPUB_STYLESHEET },
-    { path: 'OPS/images/cover image.png', content: PAGE_PNG },
+    { path: 'OPS/images/cover image.png', content: COMIC_PAGE_PNG },
     { path: 'OPS/private.txt', content: 'hidden-unmanifested-entry' },
   ]);
 }
@@ -109,13 +117,7 @@ async function createReaderDeliveryCbz(rootPath: string, relativePath: string, t
   <Year>2026</Year>
 </ComicInfo>`;
 
-  return createZipArchiveFixture(rootPath, relativePath, [
-    { path: 'ComicInfo.xml', content: comicInfoXml },
-    { path: 'pages/001-cover.png', content: PAGE_PNG },
-    { path: 'pages/002-spread.jpg', content: PAGE_JPEG },
-    { path: '.hidden/003-secret.png', content: PAGE_PNG },
-    { path: 'notes/readme.txt', content: 'not a page' },
-  ]);
+  return createZipArchiveFixture(rootPath, relativePath, [{ path: 'ComicInfo.xml', content: comicInfoXml }, ...COMIC_PAGE_ENTRIES]);
 }
 
 describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () => {
@@ -126,6 +128,8 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
 
   let sharedEpub!: LocatedBookFile;
   let sharedCbz!: LocatedBookFile;
+  let sharedCbr!: LocatedBookFile;
+  let sharedCb7!: LocatedBookFile;
   let hiddenEpub!: LocatedBookFile;
 
   let viewer!: TestUserSession;
@@ -140,6 +144,8 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
 
     const sharedEpubPath = await createReaderDeliveryEpub(sharedLibrary.folderPath, 'delivery/reader-delivery.epub', 'Reader Delivery EPUB');
     const sharedCbzPath = await createReaderDeliveryCbz(sharedLibrary.folderPath, 'delivery/reader-delivery.cbz', 'Reader Delivery Comic');
+    const sharedCbrPath = await createCbrComicFixture(sharedLibrary.folderPath, 'delivery/reader-delivery.cbr', COMIC_PAGE_ENTRIES);
+    const sharedCb7Path = await createCb7ComicFixture(sharedLibrary.folderPath, 'delivery/reader-delivery.cb7', COMIC_PAGE_ENTRIES);
     const hiddenEpubPath = await createEpubFixture(hiddenLibrary.folderPath, 'restricted/hidden-reader.epub', {
       title: 'Hidden Reader EPUB',
     });
@@ -149,6 +155,8 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
 
     sharedEpub = await locateBookByAbsolutePath(ctx, sharedEpubPath);
     sharedCbz = await locateBookByAbsolutePath(ctx, sharedCbzPath);
+    sharedCbr = await locateBookByAbsolutePath(ctx, sharedCbrPath);
+    sharedCb7 = await locateBookByAbsolutePath(ctx, sharedCb7Path);
     hiddenEpub = await locateBookByAbsolutePath(ctx, hiddenEpubPath);
 
     viewer = await createUserAndLogin(ctx);
@@ -321,7 +329,7 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
     });
   });
 
-  describe('CBZ page delivery contract', () => {
+  describe('comic page delivery contract', () => {
     it('returns page counts, streams ordered pages, and rejects invalid page requests and unsupported formats', async () => {
       const pagesResponse = await ctx.app.inject({
         method: 'GET',
@@ -339,7 +347,7 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
       expect(firstPageResponse.statusCode).toBe(200);
       expect(firstPageResponse.headers['content-type']).toContain('image/png');
       expect(firstPageResponse.headers['cache-control']).toBe('public, max-age=31536000, immutable');
-      expect(responseBuffer(firstPageResponse)).toEqual(PAGE_PNG);
+      expect(responseBuffer(firstPageResponse)).toEqual(COMIC_PAGE_PNG);
 
       const secondPageResponse = await ctx.app.inject({
         method: 'GET',
@@ -348,7 +356,7 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
       });
       expect(secondPageResponse.statusCode).toBe(200);
       expect(secondPageResponse.headers['content-type']).toContain('image/jpeg');
-      expect(responseBuffer(secondPageResponse)).toEqual(PAGE_JPEG);
+      expect(responseBuffer(secondPageResponse)).toEqual(COMIC_PAGE_JPEG);
 
       const negativePageResponse = await ctx.app.inject({
         method: 'GET',
@@ -370,6 +378,43 @@ describe('Reader format delivery (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
         headers: authHeader(viewer.accessToken),
       });
       expectError(unsupportedFormatResponse, 404, 'Unsupported comic format: epub');
+    });
+
+    it('streams CBR and CB7 pages through the same contract', async () => {
+      for (const comic of [sharedCbr, sharedCb7]) {
+        const pagesResponse = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/cbz/files/${comic.bookFileId}/pages`,
+          headers: authHeader(viewer.accessToken),
+        });
+        expect(pagesResponse.statusCode).toBe(200);
+        expect(pagesResponse.json()).toEqual({ pageCount: 2 });
+
+        const coverResponse = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/cbz/files/${comic.bookFileId}/pages/0`,
+          headers: authHeader(viewer.accessToken),
+        });
+        expect(coverResponse.statusCode).toBe(200);
+        expect(coverResponse.headers['content-type']).toContain('image/png');
+        expect(responseBuffer(coverResponse)).toEqual(COMIC_PAGE_PNG);
+
+        const spreadResponse = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/cbz/files/${comic.bookFileId}/pages/1`,
+          headers: authHeader(viewer.accessToken),
+        });
+        expect(spreadResponse.statusCode).toBe(200);
+        expect(spreadResponse.headers['content-type']).toContain('image/jpeg');
+        expect(responseBuffer(spreadResponse)).toEqual(COMIC_PAGE_JPEG);
+
+        const overflowResponse = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/cbz/files/${comic.bookFileId}/pages/2`,
+          headers: authHeader(viewer.accessToken),
+        });
+        expectError(overflowResponse, 404, 'Page 2 out of range');
+      }
     });
   });
 
