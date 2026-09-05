@@ -1,7 +1,7 @@
 vi.mock('fs/promises', () => ({ open: vi.fn() }));
 
 import { open } from 'fs/promises';
-import { detectComicContainerFormat } from './comic-format-detect';
+import { detectComicContainerFormat, isComicContainerFormat } from './comic-format-detect';
 
 type MockFileHandle = { read: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
 
@@ -89,5 +89,18 @@ describe('detectComicContainerFormat', () => {
   it('identifies ZIP even when storedFmt is cbz (no false override)', async () => {
     mockOpen.mockResolvedValue(makeHandle([0x50, 0x4b, 0x03, 0x04]));
     await expect(detectComicContainerFormat('/a.cbz', 'cbz')).resolves.toBe('cbz');
+  });
+});
+
+describe('isComicContainerFormat', () => {
+  it('accepts the three comic containers and nothing else', () => {
+    expect(isComicContainerFormat('cbz')).toBe(true);
+    expect(isComicContainerFormat('cbr')).toBe(true);
+    expect(isComicContainerFormat('cb7')).toBe(true);
+    expect(isComicContainerFormat('cbx')).toBe(false);
+    expect(isComicContainerFormat('epub')).toBe(false);
+    expect(isComicContainerFormat('CBZ')).toBe(false);
+    expect(isComicContainerFormat(null)).toBe(false);
+    expect(isComicContainerFormat(undefined)).toBe(false);
   });
 });

@@ -2,6 +2,12 @@ import { open } from 'fs/promises';
 
 export type ComicContainerFormat = 'cbz' | 'cbr' | 'cb7';
 
+const COMIC_CONTAINER_FORMATS: ReadonlySet<string> = new Set<ComicContainerFormat>(['cbz', 'cbr', 'cb7']);
+
+export function isComicContainerFormat(format: string | null | undefined): format is ComicContainerFormat {
+  return format != null && COMIC_CONTAINER_FORMATS.has(format);
+}
+
 const RAR_SIGNATURES = [
   [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00],
   [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00],
