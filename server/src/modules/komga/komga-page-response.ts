@@ -78,9 +78,10 @@ export function resolvePageRequest(query: KomgaPageQuery, options: ResolvePageRe
     return { page: 0, size: KOMGA_UNPAGED_MAX_ROWS, offset: 0, unpaged: true, sort };
   }
 
+  const maxSize = options.allowUnpaged ? KOMGA_UNPAGED_MAX_ROWS : KOMGA_MAX_PAGE_SIZE;
   const page = Math.max(query.page ?? 0, 0);
   const requestedSize = query.unpaged ? KOMGA_MAX_PAGE_SIZE : (query.size ?? options.defaultSize ?? 20);
-  const size = Math.min(Math.max(requestedSize, 1), KOMGA_MAX_PAGE_SIZE);
+  const size = Math.min(Math.max(requestedSize, 1), maxSize);
   const offset = page * size;
   if (!isOffsetWithinLimit(offset)) {
     throw new BadRequestException(`pagination window is too deep; page * size must be <= ${MAX_OFFSET_ROWS}`);
@@ -91,7 +92,8 @@ export function resolvePageRequest(query: KomgaPageQuery, options: ResolvePageRe
 export function buildKomgaPage<T>(content: T[], request: KomgaPageRequest, totalElements: number): KomgaPage<T> {
   const sort: SpringSort = { empty: request.sort.length === 0, sorted: request.sort.length > 0, unsorted: request.sort.length === 0 };
 
-  if (request.unpaged) {
+  // Mark capped unpaged results as page 0 so `last` remains false.
+  if (request.unpaged && totalElements <= content.length) {
     return {
       content,
       pageable: { sort, offset: 0, pageNumber: 0, pageSize: Math.max(content.length, 1), paged: false, unpaged: true },

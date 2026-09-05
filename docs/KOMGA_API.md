@@ -58,6 +58,9 @@ model without changing anything:
 - **Series metadata** such as publisher, language, genres, tags and authors is aggregated from the
   member books. Comic credits (pencillers, inkers, colorists, letterers, cover artists) are reported
   with their Komga roles.
+- **Very large series** are delivered in pages of at most 5,000 books even when a client asks for
+  everything at once. The response then says so (`last: false`) so the client can fetch the rest with
+  `page=1&size=5000`; a client that ignores paging sees the first 5,000 books.
 
 Series ids look like `12-s34`, `12-u` or `12-b567` (library, then series, unknown bucket or
 one-shot book). Book ids are BookOrbit book ids. Clients treat both as opaque strings.

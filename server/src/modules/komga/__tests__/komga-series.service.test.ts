@@ -2,7 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 
 import type { RequestUser } from '../../../common/types/request-user';
 import type { KomgaRequestAccount } from '../komga-auth.guard';
-import type { KomgaSeriesRecord } from '../komga-catalog.types';
+import type { KomgaBookRecord, KomgaSeriesRecord } from '../komga-catalog.types';
 import { KomgaSeriesService } from '../komga-series.service';
 
 const USER = { id: 1 } as RequestUser;
@@ -28,6 +28,35 @@ const AGGREGATE = {
   authors: [],
 };
 
+function bookRecord(id: number): KomgaBookRecord {
+  return {
+    id,
+    libraryId: 2,
+    title: `Book ${id}`,
+    addedAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+    metadataUpdatedAt: null,
+    description: null,
+    publishedDate: null,
+    isbn10: null,
+    isbn13: null,
+    file: {
+      id,
+      format: 'cbz',
+      absolutePath: `/books/${id}.cbz`,
+      sizeBytes: 1,
+      mtime: null,
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      fileHash: null,
+      pageCount: 1,
+      pageMediaType: null,
+    },
+    series: { key: SERIES.key, name: SERIES.name, number: String(id), numberSort: id },
+    authors: [],
+    tags: [],
+  };
+}
+
 function makeService() {
   const repository = {
     listSeries: vi.fn().mockResolvedValue({ rows: [SERIES], total: 1 }),
@@ -36,7 +65,7 @@ function makeService() {
     listSeriesBooks: vi.fn().mockResolvedValue({ bookIds: [10, 11], total: 2 }),
   };
   const libraryService = { resolveScope: vi.fn().mockResolvedValue(SCOPE) };
-  const bookService = { buildRecords: vi.fn().mockResolvedValue([]) };
+  const bookService = { buildRecords: vi.fn().mockResolvedValue([bookRecord(10), bookRecord(11)]) };
   return {
     service: new KomgaSeriesService(repository as never, libraryService as never, bookService as never),
     repository,
@@ -86,6 +115,7 @@ describe('KomgaSeriesService', () => {
     expect(bookService.buildRecords).toHaveBeenCalledWith(SCOPE, [10, 11], SERIES.key);
     expect(page.pageable.unpaged).toBe(true);
     expect(page.totalElements).toBe(2);
+    expect(page.content.map((book) => book.id)).toEqual(['10', '11']);
   });
 
   it('picks the lowest numbered book for the thumbnail and 404s when there is none', async () => {

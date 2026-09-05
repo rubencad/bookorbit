@@ -43,6 +43,17 @@ describe('komga page response', () => {
       expect(unpaged).toMatchObject({ unpaged: true, size: KOMGA_UNPAGED_MAX_ROWS, offset: 0 });
     });
 
+    it('lets routes that allow unpaged results page at the unpaged cap', () => {
+      const request = resolvePageRequest(
+        { page: 1, size: KOMGA_UNPAGED_MAX_ROWS },
+        { defaultSort: DEFAULT_SORT, sortableProperties: SORTABLE, allowUnpaged: true },
+      );
+      expect(request).toMatchObject({ page: 1, size: KOMGA_UNPAGED_MAX_ROWS, offset: KOMGA_UNPAGED_MAX_ROWS, unpaged: false });
+      expect(resolvePageRequest({ size: 9_999 }, { defaultSort: DEFAULT_SORT, sortableProperties: SORTABLE, allowUnpaged: true }).size).toBe(
+        KOMGA_UNPAGED_MAX_ROWS,
+      );
+    });
+
     it('rejects offsets beyond the shared pagination limit', () => {
       const page = Math.ceil(MAX_OFFSET_ROWS / KOMGA_MAX_PAGE_SIZE) + 1;
       expect(() => resolvePageRequest({ page, size: KOMGA_MAX_PAGE_SIZE }, { defaultSort: DEFAULT_SORT, sortableProperties: SORTABLE })).toThrow(
@@ -84,6 +95,20 @@ describe('komga page response', () => {
       const page = buildKomgaPage([1, 2, 3], { page: 0, size: KOMGA_UNPAGED_MAX_ROWS, offset: 0, unpaged: true, sort: [] }, 3);
       expect(page).toMatchObject({ totalPages: 1, size: 3, first: true, last: true, sort: { empty: true, sorted: false, unsorted: true } });
       expect(page.pageable).toMatchObject({ paged: false, unpaged: true, pageSize: 3 });
+    });
+
+    it('reports a capped unpaged result as the first page of a paged response', () => {
+      const content = Array.from({ length: KOMGA_UNPAGED_MAX_ROWS }, (_, index) => index);
+      const page = buildKomgaPage(content, { page: 0, size: KOMGA_UNPAGED_MAX_ROWS, offset: 0, unpaged: true, sort: [] }, KOMGA_UNPAGED_MAX_ROWS + 1);
+      expect(page).toMatchObject({
+        totalElements: KOMGA_UNPAGED_MAX_ROWS + 1,
+        totalPages: 2,
+        size: KOMGA_UNPAGED_MAX_ROWS,
+        number: 0,
+        first: true,
+        last: false,
+      });
+      expect(page.pageable).toMatchObject({ paged: true, unpaged: false, pageNumber: 0, pageSize: KOMGA_UNPAGED_MAX_ROWS });
     });
 
     it('builds an empty page that is both first and last', () => {
