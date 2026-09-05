@@ -49,24 +49,42 @@ describe('listCbrPages', () => {
   });
 
   it('does not leak file descriptors when listing succeeds or fails', async () => {
-    const openSpy = vi.spyOn(fs, 'openSync');
-    const closeSpy = vi.spyOn(fs, 'closeSync');
+    const events: Array<{ kind: 'open' | 'close'; descriptor: number }> = [];
+    const realOpen = fs.openSync;
+    const realClose = fs.closeSync;
+    const openSpy = vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+      const descriptor = realOpen(path, flags, mode);
+      if (path === readablePath || path === lockedPath) events.push({ kind: 'open', descriptor });
+      return descriptor;
+    });
+    const closeSpy = vi.spyOn(fs, 'closeSync').mockImplementation((descriptor) => {
+      events.push({ kind: 'close', descriptor });
+      realClose(descriptor);
+    });
+
     try {
       for (let attempt = 0; attempt < REPEATS; attempt++) {
         await listCbrPages(readablePath);
         await expect(listCbrPages(lockedPath)).rejects.toThrow('CBR archive is password protected');
       }
-
-      const archiveDescriptors = openSpy.mock.calls.flatMap((call, index) =>
-        call[0] === readablePath || call[0] === lockedPath ? [openSpy.mock.results[index].value as number] : [],
-      );
-      const closedDescriptors = new Set(closeSpy.mock.calls.map((call) => call[0]));
-
-      expect(archiveDescriptors).toHaveLength(2 * REPEATS);
-      expect(archiveDescriptors.filter((descriptor) => !closedDescriptors.has(descriptor))).toEqual([]);
     } finally {
       openSpy.mockRestore();
       closeSpy.mockRestore();
     }
+
+    // Descriptor numbers are recycled, so each open must be matched to the close that follows it.
+    const stillOpen = new Set<number>();
+    let opens = 0;
+    for (const { kind, descriptor } of events) {
+      if (kind === 'close') {
+        stillOpen.delete(descriptor);
+        continue;
+      }
+      opens++;
+      stillOpen.add(descriptor);
+    }
+
+    expect(opens).toBe(2 * REPEATS);
+    expect([...stillOpen]).toEqual([]);
   });
 });
