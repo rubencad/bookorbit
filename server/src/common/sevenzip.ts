@@ -15,15 +15,35 @@ export interface SevenZipFS {
   isDir(mode: number): boolean;
   unlink(path: string): void;
   rmdir(path: string): void;
+  mount(type: unknown, options: { root: string }, mountPoint: string): void;
+  unmount(mountPoint: string): void;
 }
 
 export interface SevenZipModule {
   FS: SevenZipFS;
+  NODEFS: unknown;
   callMain(args: string[]): void;
+}
+
+export interface SevenZipRunResult {
+  stdout: string[];
+  stderr: string[];
+  exitError: unknown;
 }
 
 let _instance: SevenZipModule | null = null;
 let _instancePromise: Promise<SevenZipModule> | null = null;
+let _capture: SevenZipRunResult | null = null;
+
+function printLine(line: string): void {
+  if (_capture) _capture.stdout.push(line);
+  else console.log(line);
+}
+
+function printErrorLine(line: string): void {
+  if (_capture) _capture.stderr.push(line);
+  else console.error(line);
+}
 
 export async function getSevenZip(): Promise<SevenZipModule> {
   if (_instance) return _instance;
@@ -32,7 +52,7 @@ export async function getSevenZip(): Promise<SevenZipModule> {
     _instancePromise = import('7z-wasm')
       .then((mod) => {
         const factory = (mod.default ?? mod) as unknown as (opts?: object) => Promise<SevenZipModule>;
-        return factory();
+        return factory({ print: printLine, printErr: printErrorLine });
       })
       .then((module) => {
         _instance = module;
@@ -44,6 +64,20 @@ export async function getSevenZip(): Promise<SevenZipModule> {
       });
   }
   return _instancePromise;
+}
+
+// runSevenZip is synchronous, so calls cannot overlap on the shared capture buffer
+export function runSevenZip(sevenZip: SevenZipModule, args: string[]): SevenZipRunResult {
+  const result: SevenZipRunResult = { stdout: [], stderr: [], exitError: null };
+  _capture = result;
+  try {
+    sevenZip.callMain(args);
+  } catch (error) {
+    result.exitError = error;
+  } finally {
+    _capture = null;
+  }
+  return result;
 }
 
 /**

@@ -91,4 +91,52 @@ describe('getSevenZip', () => {
     await expect(getSevenZip()).resolves.toBe(instance);
     expect(factory).toHaveBeenCalledTimes(2);
   });
+
+  it('captures stdout, stderr, and the thrown exit status', async () => {
+    let hooks!: { print: (line: string) => void; printErr: (line: string) => void };
+    const instance = {
+      FS: {},
+      callMain: vi.fn((args: string[]) => {
+        hooks.print(`Path = ${args[0]}`);
+        hooks.printErr('ERROR: nope');
+        // The WASM runtime throws its numeric exit status, not an Error.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (args[0] === 'boom') throw 2;
+      }),
+    };
+    const factory = vi.fn((options: typeof hooks) => {
+      hooks = options;
+      return Promise.resolve(instance);
+    });
+
+    vi.doMock('7z-wasm', () => ({ default: factory }));
+
+    const { getSevenZip, runSevenZip } = await import('./sevenzip');
+    const sevenZip = await getSevenZip();
+
+    expect(runSevenZip(sevenZip, ['a.cb7'])).toEqual({ stdout: ['Path = a.cb7'], stderr: ['ERROR: nope'], exitError: null });
+    expect(runSevenZip(sevenZip, ['boom'])).toEqual({ stdout: ['Path = boom'], stderr: ['ERROR: nope'], exitError: 2 });
+  });
+
+  it('forwards output to the console when no command is being captured', async () => {
+    let hooks!: { print: (line: string) => void; printErr: (line: string) => void };
+    const factory = vi.fn((options: typeof hooks) => {
+      hooks = options;
+      return Promise.resolve({ FS: {}, callMain: vi.fn() });
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    vi.doMock('7z-wasm', () => ({ default: factory }));
+
+    const { getSevenZip } = await import('./sevenzip');
+    await getSevenZip();
+    hooks.print('banner');
+    hooks.printErr('warning');
+
+    expect(log).toHaveBeenCalledWith('banner');
+    expect(error).toHaveBeenCalledWith('warning');
+    log.mockRestore();
+    error.mockRestore();
+  });
 });
