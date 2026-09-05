@@ -56,7 +56,9 @@ function makeController() {
     resolveDownloadFilename: vi.fn().mockResolvedValue('BadTitle - Author.epub'),
   } as never;
   const opdsPageService = {
-    resolveComicFile: vi.fn().mockResolvedValue({ id: 7, absolutePath: '/books/saga.cbz', format: 'cbz', pageCount: 3, mtime: new Date(5_000) }),
+    resolveComicFile: vi
+      .fn()
+      .mockResolvedValue({ id: 7, absolutePath: '/books/saga.cbz', format: 'cbz', pageCount: 3, pageMediaType: null, mtime: new Date(5_000) }),
     streamPage: vi.fn().mockResolvedValue({ stream: { kind: 'page-stream' }, mimeType: 'image/png' }),
   } as never;
 
@@ -404,7 +406,14 @@ describe('OpdsController', () => {
 
     it('sends no ETag when the file modification time is unknown', async () => {
       const { controller, opdsPageService } = makeController();
-      opdsPageService.resolveComicFile.mockResolvedValue({ id: 7, absolutePath: '/books/saga.cbz', format: 'cbz', pageCount: 3, mtime: null });
+      opdsPageService.resolveComicFile.mockResolvedValue({
+        id: 7,
+        absolutePath: '/books/saga.cbz',
+        format: 'cbz',
+        pageCount: 3,
+        pageMediaType: null,
+        mtime: null,
+      });
       const reply = makeReply();
 
       await controller.page(42, 0, user, reply, undefined, undefined, '"7-0-0-0"');

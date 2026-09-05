@@ -99,6 +99,7 @@ export interface OpdsComicFile {
   id: number;
   format: string;
   pageCount: number | null;
+  pageMediaType: string | null;
 }
 
 export interface OpdsComicProgress {
@@ -111,6 +112,7 @@ export interface OpdsComicFileRef {
   absolutePath: string;
   format: string;
   pageCount: number | null;
+  pageMediaType: string | null;
   mtime: Date | null;
 }
 
@@ -719,6 +721,7 @@ export class OpdsBookService {
         absolutePath: bookFiles.absolutePath,
         format: bookFiles.format,
         pageCount: bookFiles.pageCount,
+        pageMediaType: bookFiles.pageMediaType,
         mtime: bookFiles.mtime,
       })
       .from(bookFiles)
@@ -876,6 +879,7 @@ export class OpdsBookService {
           format: bookFiles.format,
           role: bookFiles.role,
           pageCount: bookFiles.pageCount,
+          pageMediaType: bookFiles.pageMediaType,
           absolutePath: bookFiles.absolutePath,
         })
         .from(bookFiles)
@@ -900,7 +904,13 @@ export class OpdsBookService {
       list.push({ id: row.id, format: row.format ?? 'unknown' });
       filesByBook.set(row.bookId, list);
       if (isComicContainerFormat(row.format) && !comicFileByBook.has(row.bookId)) {
-        comicFileByBook.set(row.bookId, { id: row.id, format: row.format, pageCount: row.pageCount, absolutePath: row.absolutePath });
+        comicFileByBook.set(row.bookId, {
+          id: row.id,
+          format: row.format,
+          pageCount: row.pageCount,
+          pageMediaType: row.pageMediaType,
+          absolutePath: row.absolutePath,
+        });
       }
     }
 
@@ -930,7 +940,9 @@ export class OpdsBookService {
           hasCover: row.coverSource !== null,
           authors: authorsByBook.get(row.id) ?? [],
           files: filesByBook.get(row.id) ?? [],
-          comicFile: comicFile ? { id: comicFile.id, format: comicFile.format, pageCount: comicFile.pageCount } : null,
+          comicFile: comicFile
+            ? { id: comicFile.id, format: comicFile.format, pageCount: comicFile.pageCount, pageMediaType: comicFile.pageMediaType }
+            : null,
           progress: comicFile ? (progressByFile.get(comicFile.id) ?? null) : null,
         };
       })
@@ -959,7 +971,13 @@ export class OpdsBookService {
   private queueMissingPageCounts(comicFiles: ComicFileRow[]): void {
     for (const file of comicFiles) {
       if (file.pageCount !== null) continue;
-      this.comicPageService.queuePageCount({ id: file.id, absolutePath: file.absolutePath, format: file.format, pageCount: null });
+      this.comicPageService.queuePageCount({
+        id: file.id,
+        absolutePath: file.absolutePath,
+        format: file.format,
+        pageCount: null,
+        pageMediaType: null,
+      });
     }
   }
 

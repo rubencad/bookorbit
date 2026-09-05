@@ -341,10 +341,10 @@ describe('OpdsBookService', () => {
 
     it('attaches the first comic file, its page count, and the reader progress on that file', async () => {
       const fileRows = [
-        { bookId: 1, id: 11, format: 'epub', role: 'content', pageCount: null, absolutePath: '/books/comic-1/a.epub' },
-        { bookId: 1, id: 12, format: 'cbz', role: 'content', pageCount: 24, absolutePath: '/books/comic-1/a.cbz' },
-        { bookId: 1, id: 13, format: 'cbr', role: 'content', pageCount: 30, absolutePath: '/books/comic-1/a.cbr' },
-        { bookId: 2, id: 21, format: 'epub', role: 'content', pageCount: null, absolutePath: '/books/comic-2/b.epub' },
+        { bookId: 1, id: 11, format: 'epub', role: 'content', pageCount: null, pageMediaType: null, absolutePath: '/books/comic-1/a.epub' },
+        { bookId: 1, id: 12, format: 'cbz', role: 'content', pageCount: 24, pageMediaType: 'image/png', absolutePath: '/books/comic-1/a.cbz' },
+        { bookId: 1, id: 13, format: 'cbr', role: 'content', pageCount: 30, pageMediaType: null, absolutePath: '/books/comic-1/a.cbr' },
+        { bookId: 2, id: 21, format: 'epub', role: 'content', pageCount: null, pageMediaType: null, absolutePath: '/books/comic-2/b.epub' },
       ];
       const lastReadAt = new Date('2026-02-03T04:05:06Z');
       const progressRows = [{ bookFileId: 12, pageNumber: 5, lastReadAt }];
@@ -353,7 +353,7 @@ describe('OpdsBookService', () => {
       const entries = (await testable(service).fetchBookEntries([1, 2], { userId: 7 })) as { id: number; comicFile: unknown; progress: unknown }[];
 
       expect(entries.map((entry) => [entry.id, entry.comicFile, entry.progress])).toEqual([
-        [1, { id: 12, format: 'cbz', pageCount: 24 }, { pageNumber: 5, lastReadAt }],
+        [1, { id: 12, format: 'cbz', pageCount: 24, pageMediaType: 'image/png' }, { pageNumber: 5, lastReadAt }],
         [2, null, null],
       ]);
       expect(db.select).toHaveBeenCalledTimes(4);
@@ -383,19 +383,27 @@ describe('OpdsBookService', () => {
     });
 
     it('queues a recount for comic files without a stored page count and leaves the entry without one', async () => {
-      const fileRows = [{ bookId: 1, id: 12, format: 'cbr', role: 'content', pageCount: null, absolutePath: '/books/comic-1/a.cbr' }];
+      const fileRows = [
+        { bookId: 1, id: 12, format: 'cbr', role: 'content', pageCount: null, pageMediaType: null, absolutePath: '/books/comic-1/a.cbr' },
+      ];
       const { service, comicPageService } = makeService([[metaRow(1)], [], fileRows, []]);
 
       const [entry] = (await testable(service).fetchBookEntries([1], { userId: 7 })) as { comicFile: unknown }[];
 
-      expect(entry).toMatchObject({ comicFile: { id: 12, format: 'cbr', pageCount: null } });
-      expect(comicPageService.queuePageCount).toHaveBeenCalledWith({ id: 12, absolutePath: '/books/comic-1/a.cbr', format: 'cbr', pageCount: null });
+      expect(entry).toMatchObject({ comicFile: { id: 12, format: 'cbr', pageCount: null, pageMediaType: null } });
+      expect(comicPageService.queuePageCount).toHaveBeenCalledWith({
+        id: 12,
+        absolutePath: '/books/comic-1/a.cbr',
+        format: 'cbr',
+        pageCount: null,
+        pageMediaType: null,
+      });
     });
   });
 
   describe('getComicFile', () => {
     it('returns the preferred comic content file of a book', async () => {
-      const row = { id: 12, absolutePath: '/books/a.cbz', format: 'cbz', pageCount: 24, mtime: new Date('2026-01-01') };
+      const row = { id: 12, absolutePath: '/books/a.cbz', format: 'cbz', pageCount: 24, pageMediaType: 'image/jpeg', mtime: new Date('2026-01-01') };
       const { service, db } = makeService([[row]]);
 
       await expect(service.getComicFile(1)).resolves.toEqual(row);

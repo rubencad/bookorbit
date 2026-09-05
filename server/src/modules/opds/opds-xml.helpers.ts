@@ -62,10 +62,6 @@ export function fileMimeType(format: string): string {
   }
 }
 
-export const OPDS_PSE_NAMESPACE = 'http://vaemendis.net/opds-pse/ns';
-export const OPDS_PSE_STREAM_REL = 'http://vaemendis.net/opds-pse/stream';
-export const OPDS_PSE_STREAM_TYPE = 'image/jpeg';
-
 export const OPDS_MIME_NAV = 'application/atom+xml;profile=opds-catalog;kind=navigation';
 export const OPDS_MIME_ACQ = 'application/atom+xml;profile=opds-catalog;kind=acquisition';
 export const OPDS_MIME_SEARCH = 'application/opensearchdescription+xml';

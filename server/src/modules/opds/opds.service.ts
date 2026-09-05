@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import { OPDS_PSE_NAMESPACE, OPDS_PSE_STREAM_REL, pseStreamType } from './opds-pse';
 import {
   esc,
   fileMimeType,
@@ -7,9 +8,6 @@ import {
   OPDS_MIME_ATOM,
   OPDS_MIME_NAV,
   OPDS_MIME_SEARCH,
-  OPDS_PSE_NAMESPACE,
-  OPDS_PSE_STREAM_REL,
-  OPDS_PSE_STREAM_TYPE,
   toRfc3339Seconds,
   xmlEl,
   xmlLink,
@@ -240,7 +238,7 @@ export class OpdsService {
     }
 
     const href = `${BASE}/${book.id}/pages/{pageNumber}?fileId=${comicFile.id}&maxWidth={maxWidth}`;
-    return xmlLink(OPDS_PSE_STREAM_REL, href, OPDS_PSE_STREAM_TYPE, undefined, attributes);
+    return xmlLink(OPDS_PSE_STREAM_REL, href, pseStreamType(comicFile.pageMediaType), undefined, attributes);
   }
 
   // Both links are needed. Compliant clients follow the OpenSearch description; Moon+ Reader

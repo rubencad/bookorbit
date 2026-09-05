@@ -37,7 +37,7 @@ function sampleComic(overrides?: Partial<OpdsBookEntry>): OpdsBookEntry {
     id: 42,
     title: 'Saga Volume 1',
     files: [{ id: 7, format: 'cbz' }],
-    comicFile: { id: 7, format: 'cbz', pageCount: 35 },
+    comicFile: { id: 7, format: 'cbz', pageCount: 35, pageMediaType: 'image/jpeg' },
     progress: { pageNumber: 10, lastReadAt: new Date('2026-01-10T10:01:11.789Z') },
     ...overrides,
   });
@@ -455,8 +455,22 @@ describe('OpdsService', () => {
 
     it('omits the stream link for books without a comic file or without a known page count', () => {
       expect(streamLinkLine(acquisitionFeed([sampleBook()]))).toBeUndefined();
-      expect(streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: null } })]))).toBeUndefined();
-      expect(streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: 0 } })]))).toBeUndefined();
+      expect(
+        streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: null, pageMediaType: null } })])),
+      ).toBeUndefined();
+      expect(
+        streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: 0, pageMediaType: 'image/png' } })])),
+      ).toBeUndefined();
+    });
+
+    it('advertises PNG only when every page is PNG and JPEG for every other archive', () => {
+      const typeOf = (pageMediaType: string | null) =>
+        streamLinkLine(acquisitionFeed([sampleComic({ comicFile: { id: 7, format: 'cbz', pageCount: 35, pageMediaType } })]))!;
+
+      expect(typeOf('image/png')).toContain('type="image/png"');
+      expect(typeOf('image/jpeg')).toContain('type="image/jpeg"');
+      expect(typeOf(null)).toContain('type="image/jpeg"');
+      expect(typeOf('image/webp')).toContain('type="image/jpeg"');
     });
 
     it('keeps the download link next to the stream link', () => {
