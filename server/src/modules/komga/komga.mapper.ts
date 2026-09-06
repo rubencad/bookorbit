@@ -5,9 +5,8 @@ import type { ComicPageEntry } from '../comic-pages/lib/comic-page-entry';
 import type { KomgaRequestAccount } from './komga-auth.guard';
 import type { KomgaBookRecord, KomgaLibraryRecord, KomgaSeriesAggregate, KomgaSeriesRecord } from './komga-catalog.types';
 import { formatSeriesId } from './komga-ids';
-import { KOMGA_ROLES } from './komga.constants';
+import { KOMGA_ROLES, type KomgaMediaProfile } from './komga.constants';
 
-export type KomgaMediaProfile = 'DIVINA' | 'EPUB' | 'PDF';
 export type KomgaMediaStatus = 'READY' | 'UNSUPPORTED';
 
 export interface KomgaMedia {
