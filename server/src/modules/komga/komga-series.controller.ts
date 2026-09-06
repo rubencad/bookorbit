@@ -1,4 +1,4 @@
-import { Get, Headers, Param, Query, Res } from '@nestjs/common';
+import { Body, Get, Headers, HttpCode, HttpStatus, Param, Post, Query, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -6,7 +6,15 @@ import type { RequestUser } from '../../common/types/request-user';
 import { KomgaAccount } from './komga-account.decorator';
 import type { KomgaRequestAccount } from './komga-auth.guard';
 import { KomgaController } from './komga-public.controller';
-import { parseKomgaQuery, seriesBooksQuerySchema, seriesListQuerySchema, seriesRecentQuerySchema, type KomgaRawQuery } from './komga-query';
+import {
+  emptyPageQuerySchema,
+  parseKomgaQuery,
+  seriesBooksQuerySchema,
+  seriesListQuerySchema,
+  seriesRecentQuerySchema,
+  type KomgaRawQuery,
+} from './komga-query';
+import { parseKomgaSeriesSearch } from './komga-search-condition';
 import { KomgaSeriesService } from './komga-series.service';
 import { KomgaThumbnailService } from './komga-thumbnail.service';
 
@@ -20,6 +28,12 @@ export class KomgaSeriesController {
   @Get()
   list(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
     return this.seriesService.list(user, account, parseKomgaQuery(seriesListQuerySchema, query));
+  }
+
+  @Post('list')
+  @HttpCode(HttpStatus.OK)
+  search(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery, @Body() body: unknown) {
+    return this.seriesService.search(user, account, parseKomgaSeriesSearch(body), parseKomgaQuery(emptyPageQuerySchema, query));
   }
 
   @Get('new')

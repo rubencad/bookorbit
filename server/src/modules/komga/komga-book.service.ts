@@ -26,7 +26,8 @@ import type {
 import { formatSeriesId, type KomgaSeriesKey } from './komga-ids';
 import { KomgaLibraryService } from './komga-library.service';
 import { buildKomgaPage, resolvePageRequest, type KomgaPage, type KomgaRecordPage } from './komga-page-response';
-import type { BookListQuery, BookRecentQuery, PageImageQuery } from './komga-query';
+import type { BookListQuery, BookRecentQuery, PageImageQuery, PageOnlyQuery } from './komga-query';
+import { requiredSeriesKey, restrictScopeToCondition, type KomgaBookSearch } from './komga-search-condition';
 import { isKomgaVisibleNonComicFormat, toKomgaBookDto } from './komga.mapper';
 import { KOMGA_UNKNOWN_SERIES_TITLE, KOMGA_UNPAGED_MAX_ROWS } from './komga.constants';
 
@@ -136,13 +137,19 @@ export class KomgaBookService {
     return buildKomgaPage(records.map(toKomgaBookDto), page, total);
   }
 
-  async get(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookDto> {
-    return toKomgaBookDto(await this.getRecord(user, account, bookId));
+  async search(user: RequestUser, account: KomgaRequestAccount, search: KomgaBookSearch, query: PageOnlyQuery): Promise<KomgaPage<KomgaBookDto>> {
+    const page = resolvePageRequest(query, {
+      defaultSort: [{ property: 'metadata.titleSort', direction: 'asc' }],
+      sortableProperties: KOMGA_BOOK_SORT_PROPERTIES,
+    });
+    const scope = restrictScopeToCondition(await this.libraryService.resolveScope(user, account), search.condition);
+    const { bookIds, total } = await this.repository.listBooks(scope, { search: search.fullTextSearch, condition: search.condition }, page);
+    const records = await this.buildRecords(scope, bookIds, requiredSeriesKey(search.condition));
+    return buildKomgaPage(records.map(toKomgaBookDto), page, total);
   }
 
-  async getRecord(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookRecord> {
-    const scope = await this.libraryService.resolveScope(user, account);
-    return this.requireRecord(scope, bookId);
+  async get(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookDto> {
+    return toKomgaBookDto(await this.getRecord(user, account, bookId));
   }
 
   async listPages(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<ComicPageEntry[]> {

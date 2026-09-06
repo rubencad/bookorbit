@@ -38,8 +38,18 @@ import type {
   KomgaSeriesRecord,
 } from './komga-catalog.types';
 import { formatSeriesId, type KomgaSeriesKey } from './komga-ids';
-import type { KomgaPageRequest } from './komga-page-response';
-import { KOMGA_SERIES_TERMS_MAX, KOMGA_UNKNOWN_SERIES_TITLE, type KomgaAuthorRole } from './komga.constants';
+import type { KomgaPageRequest, KomgaSort } from './komga-page-response';
+import type { KomgaAuthorMatch, KomgaBookCondition, KomgaSeriesCondition } from './komga-search-condition';
+import { compileKomgaBookCondition, compileKomgaSeriesCondition, type KomgaBookPredicates, type KomgaSeriesPredicates } from './komga-search.sql';
+import {
+  KOMGA_READ_STATUSES,
+  KOMGA_SERIES_TERMS_MAX,
+  KOMGA_UNKNOWN_SERIES_TITLE,
+  type KomgaAuthorRole,
+  type KomgaMediaProfile,
+  type KomgaMediaStatusValue,
+  type KomgaReadStatus,
+} from './komga.constants';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -54,6 +64,7 @@ export interface KomgaSeriesFilters {
   readStatuses?: string[];
   oneshot?: boolean;
   updatedOnly?: boolean;
+  condition?: KomgaSeriesCondition | null;
 }
 
 export interface KomgaOnDeckEntry {
@@ -67,6 +78,7 @@ export interface KomgaBookFilters {
   readStatuses?: string[];
   tags?: string[];
   authors?: string[];
+  condition?: KomgaBookCondition | null;
 }
 
 export interface KomgaReferentialWindow {
@@ -165,9 +177,6 @@ type SeriesSourceRow = {
   expected_book_count: number | null;
 };
 
-const READ_STATUS_FILTERS = ['UNREAD', 'IN_PROGRESS', 'READ'] as const;
-type ReadStatusFilter = (typeof READ_STATUS_FILTERS)[number];
-
 const NON_COMIC_VISIBLE_FORMATS: readonly string[] = EBOOK_FORMAT_LIST;
 const PAGE_LAYOUT_FORMATS: readonly string[] = ['pdf', 'djvu'];
 const SERIES_SORT_COLUMNS: Record<string, SQL> = {
@@ -182,14 +191,16 @@ const SERIES_SORT_COLUMNS: Record<string, SQL> = {
 };
 export const KOMGA_SERIES_SORT_PROPERTIES = Object.keys(SERIES_SORT_COLUMNS);
 
-const BOOK_SORT_COLUMNS: Record<string, SQL> = {
-  'metadata.titleSort': sql`lower(${bookMetadata.title})`,
-  'metadata.title': sql`lower(${bookMetadata.title})`,
-  name: sql`lower(${bookMetadata.title})`,
-  createdDate: sql`${books.addedAt}`,
-  lastModifiedDate: sql`${books.updatedAt}`,
-  fileLastModified: sql`${books.updatedAt}`,
-  'metadata.numberSort': sql`lower(${bookMetadata.title})`,
+const BOOK_SORT_COLUMNS: Record<string, (userId: number) => SQL> = {
+  'metadata.titleSort': () => sql`lower(${bookMetadata.title})`,
+  'metadata.title': () => sql`lower(${bookMetadata.title})`,
+  name: () => sql`lower(${bookMetadata.title})`,
+  createdDate: () => sql`${books.addedAt}`,
+  lastModifiedDate: () => sql`${books.updatedAt}`,
+  fileLastModified: () => sql`${books.updatedAt}`,
+  'metadata.releaseDate': () => sql`${bookMetadata.publishedDate}`,
+  'readProgress.readDate': (userId) => latestReadAtSql(userId),
+  'metadata.numberSort': () => sql`lower(${bookMetadata.title})`,
 };
 export const KOMGA_BOOK_SORT_PROPERTIES = Object.keys(BOOK_SORT_COLUMNS);
 export const KOMGA_SERIES_BOOK_SORT_PROPERTIES = [
@@ -199,6 +210,8 @@ export const KOMGA_SERIES_BOOK_SORT_PROPERTIES = [
   'name',
   'createdDate',
   'lastModifiedDate',
+  'metadata.releaseDate',
+  'readProgress.readDate',
 ];
 
 const COMIC_CREDIT_COLUMNS: ReadonlyArray<{ column: SQL; role: KomgaAuthorRole }> = [
@@ -215,6 +228,16 @@ function direction(sortDirection: 'asc' | 'desc'): SQL {
 
 function joinSql(parts: SQL[], separator: SQL): SQL {
   return sql.join(parts, separator);
+}
+
+function bookSortSql(sort: KomgaSort, userId: number): SQL {
+  return sql`${(BOOK_SORT_COLUMNS[sort.property] ?? BOOK_SORT_COLUMNS.name)(userId)} ${direction(sort.direction)}`;
+}
+
+function latestReadAtSql(userId: number): SQL {
+  return sql`(SELECT max(${readingProgress.lastReadAt}) FROM ${readingProgress}
+    INNER JOIN ${bookFiles} ON ${bookFiles.id} = ${readingProgress.bookFileId}
+    WHERE ${bookFiles.bookId} = ${books.id} AND ${bookFiles.role} = 'content' AND ${readingProgress.userId} = ${userId})`;
 }
 
 @Injectable()
@@ -254,9 +277,10 @@ export class KomgaCatalogRepository {
     );
 
     const listed = filters.updatedOnly ? sql`SELECT * FROM (${source}) AS updated WHERE updated.created_at <> updated.updated_at` : source;
+    const where = filters.condition ? sql` WHERE ${compileKomgaSeriesCondition(filters.condition, this.seriesPredicates(scope))}` : sql``;
     const [pageResult, countResult] = await Promise.all([
-      this.db.execute<SeriesSourceRow>(sql`SELECT * FROM (${listed}) AS series ORDER BY ${orderBy} LIMIT ${page.size} OFFSET ${page.offset}`),
-      this.db.execute<{ total: string }>(sql`SELECT count(*)::text AS total FROM (${listed}) AS series`),
+      this.db.execute<SeriesSourceRow>(sql`SELECT * FROM (${listed}) AS series${where} ORDER BY ${orderBy} LIMIT ${page.size} OFFSET ${page.offset}`),
+      this.db.execute<{ total: string }>(sql`SELECT count(*)::text AS total FROM (${listed}) AS series${where}`),
     ]);
 
     return { rows: pageResult.rows.map(toSeriesRecord), total: Number(countResult.rows[0]?.total ?? 0) };
@@ -382,21 +406,7 @@ export class KomgaCatalogRepository {
     page: KomgaPageRequest,
   ): Promise<{ bookIds: number[]; total: number }> {
     if (!scope.libraryIds.includes(key.libraryId)) return { bookIds: [], total: 0 };
-    const clauses = [
-      ...this.baseClauses({ ...scope, libraryIds: [key.libraryId] }),
-      ...this.bookFilterClauses(scope, filters),
-      ...this.seriesMemberClauses(key),
-    ];
-    const where = and(...clauses)!;
-
-    const orderBy: SQL[] = [];
-    const sort = page.sort[0];
-    if (key.kind === 'series' && (!sort || sort.property === 'metadata.numberSort')) {
-      orderBy.push(...seriesIndexOrderBy(bookSeriesMemberships.seriesIndex, sort?.direction === 'desc' ? 'DESC' : 'ASC'));
-    } else if (sort && sort.property !== 'metadata.numberSort') {
-      orderBy.push(sql`${BOOK_SORT_COLUMNS[sort.property] ?? sql`lower(${bookMetadata.title})`} ${direction(sort.direction)}`);
-    }
-    orderBy.push(sql`lower(${bookMetadata.title}) ASC NULLS LAST`, sql`${books.id} ASC`);
+    const { where, orderBy } = this.seriesBooksQuery(scope, key, filters, page.sort[0]);
 
     const base = this.db.select({ id: books.id }).from(books).leftJoin(bookMetadata, eq(bookMetadata.bookId, books.id));
     const idQuery = (key.kind === 'series' ? base.innerJoin(bookSeriesMemberships, this.membershipJoin(key.seriesId)) : base)
@@ -416,12 +426,7 @@ export class KomgaCatalogRepository {
   async listBooks(scope: KomgaScope, filters: KomgaBookFilters, page: KomgaPageRequest): Promise<{ bookIds: number[]; total: number }> {
     if (scope.libraryIds.length === 0) return { bookIds: [], total: 0 };
     const where = and(...this.baseClauses(scope), ...this.bookFilterClauses(scope, filters))!;
-    const orderBy = [
-      ...page.sort.map(
-        (sort) => sql`${BOOK_SORT_COLUMNS[sort.property] ?? sql`lower(${bookMetadata.title})`} ${direction(sort.direction)} NULLS LAST`,
-      ),
-      sql`${books.id} ASC`,
-    ];
+    const orderBy = [...page.sort.map((sort) => sql`${bookSortSql(sort, scope.userId)} NULLS LAST`), sql`${books.id} ASC`];
 
     const [idRows, countRows] = await Promise.all([
       this.db
@@ -726,12 +731,7 @@ export class KomgaCatalogRepository {
         ${having.length > 0 ? sql`HAVING ${joinSql(having, sql` AND `)}` : sql``}`);
     }
 
-    const unmembered = notExists(
-      this.db
-        .select({ one: sql`1` })
-        .from(bookSeriesMemberships)
-        .where(sql`${bookSeriesMemberships.bookId} = ${books.id}`),
-    );
+    const unmembered = this.unmemberedClause();
     const includeUnknown = scope.groupUnknownSeries && (key === undefined || key.kind === 'unknown') && filters.oneshot !== true && wantsOngoing;
     if (includeUnknown && (!searchPattern || matchesTitle(KOMGA_UNKNOWN_SERIES_TITLE, filters.search!))) {
       const having = bookPredicates.map((predicate) => sql`bool_or(${predicate})`);
@@ -783,7 +783,7 @@ export class KomgaCatalogRepository {
     return { read, inProgress: sql`(NOT ${read} AND ${latestPercentage} IS NOT NULL)` };
   }
 
-  private readStatusClause(statuses: ReadStatusFilter[], read: SQL, inProgress: SQL): SQL {
+  private readStatusClause(statuses: readonly KomgaReadStatus[], read: SQL, inProgress: SQL): SQL {
     if (statuses.length === 0) return sql`false`;
     return sql`(${joinSql(
       statuses.map((status) => {
@@ -846,7 +846,137 @@ export class KomgaCatalogRepository {
       const { read, inProgress } = this.readStateClauses(scope.userId);
       clauses.push(this.readStatusClause(readStatuses, read, inProgress));
     }
+    if (filters.condition) clauses.push(compileKomgaBookCondition(filters.condition, this.bookPredicates(scope)));
     return clauses;
+  }
+
+  private seriesBooksQuery(
+    scope: KomgaScope,
+    key: KomgaSeriesKey,
+    filters: KomgaBookFilters,
+    sort: KomgaSort | undefined,
+  ): { where: SQL; orderBy: SQL[] } {
+    const where = and(
+      ...this.baseClauses({ ...scope, libraryIds: [key.libraryId] }),
+      ...this.bookFilterClauses(scope, filters),
+      ...this.seriesMemberClauses(key),
+    )!;
+    const orderBy: SQL[] = [];
+    if (key.kind === 'series' && (!sort || sort.property === 'metadata.numberSort')) {
+      orderBy.push(...seriesIndexOrderBy(bookSeriesMemberships.seriesIndex, sort?.direction === 'desc' ? 'DESC' : 'ASC'));
+    } else if (sort && sort.property !== 'metadata.numberSort') {
+      orderBy.push(bookSortSql(sort, scope.userId));
+    }
+    orderBy.push(sql`lower(${bookMetadata.title}) ASC NULLS LAST`, sql`${books.id} ASC`);
+    return { where, orderBy };
+  }
+
+  private bookPredicates(scope: KomgaScope): KomgaBookPredicates {
+    const { read, inProgress } = this.readStateClauses(scope.userId);
+    return {
+      library: (libraryId) => eq(books.libraryId, libraryId),
+      series: (key) =>
+        and(eq(books.libraryId, key.libraryId), ...this.seriesMemberClauses(key), ...(key.kind === 'series' ? [this.memberOf(key.seriesId)] : []))!,
+      oneshot: () => (scope.groupUnknownSeries ? sql`false` : this.unmemberedClause()),
+      title: () => this.bookTitleSql(),
+      releaseDate: () => sql`${bookMetadata.publishedDate}`,
+      readStatus: (statuses) => this.readStatusClause(statuses, read, inProgress),
+      term: (kind, name) => this.termClause(kind, [name]),
+      anyTerm: (kind) => this.anyTermClause(kind),
+      metadataText: (field, value) => this.metadataTextClause(field, value),
+      author: (match) => this.authorMatchClause(match),
+      mediaStatus: (status) => this.mediaStatusValueClause(scope, status),
+      mediaProfile: (profile) => this.mediaProfileClause(scope, profile),
+    };
+  }
+
+  // The `books` table inside the correlated subquery shadows nothing: the outer query only sees the
+  // aliased series rows, so the shared predicates bind to the member being tested.
+  private seriesPredicates(scope: KomgaScope): KomgaSeriesPredicates {
+    const memberOfRow = sql`${books.libraryId} = series.library_id AND CASE
+      WHEN series.series_id IS NOT NULL THEN ${this.memberOf(sql`series.series_id`)}
+      WHEN series.book_id IS NOT NULL THEN ${books.id} = series.book_id
+      ELSE ${this.unmemberedClause()} END`;
+    const members = (predicate: SQL) =>
+      sql`FROM ${books} LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id} WHERE ${and(...this.baseClauses(scope))} AND ${memberOfRow} AND ${predicate}`;
+    return {
+      book: this.bookPredicates(scope),
+      memberExists: (predicate) => sql`EXISTS (SELECT 1 ${members(predicate)})`,
+      releaseDate: () => sql`(SELECT min(${bookMetadata.publishedDate}) ${members(sql`true`)})`,
+    };
+  }
+
+  private memberOf(seriesId: number | SQL): SQL {
+    return exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(bookSeriesMemberships)
+        .where(and(sql`${bookSeriesMemberships.bookId} = ${books.id}`, sql`${bookSeriesMemberships.seriesId} = ${seriesId}`)),
+    );
+  }
+
+  private anyTermClause(kind: 'genre' | 'tag'): SQL {
+    const link = kind === 'genre' ? bookGenres : bookTags;
+    return exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(link)
+        .where(sql`${link.bookId} = ${books.id}`),
+    );
+  }
+
+  private metadataTextClause(field: 'publisher' | 'language', value: string): SQL {
+    const column = field === 'publisher' ? bookMetadata.publisher : bookMetadata.language;
+    return exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(bookMetadata)
+        .where(and(sql`${bookMetadata.bookId} = ${books.id}`, sql`lower(${column}) = ${value.toLowerCase()}`)),
+    );
+  }
+
+  private authorMatchClause(match: KomgaAuthorMatch): SQL {
+    const name = match.name?.toLowerCase() ?? null;
+    const nameFilter = (column: SQL) => (name === null ? sql`true` : sql`lower(${column}) = ${name}`);
+    const writers = exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
+        .where(and(sql`${bookAuthors.bookId} = ${books.id}`, nameFilter(sql`${authors.name}`))),
+    );
+    const creditColumns = COMIC_CREDIT_COLUMNS.filter(({ role }) => match.role === null || match.role === role);
+    const credits = creditColumns.map(
+      ({ column }) => sql`EXISTS (SELECT 1 FROM unnest(${column}) AS credit(name) WHERE credit.name <> '' AND ${nameFilter(sql`credit.name`)})`,
+    );
+    const branches: SQL[] = [];
+    if (match.role === null || match.role === 'writer') branches.push(writers);
+    if (credits.length > 0) {
+      branches.push(sql`EXISTS (SELECT 1 FROM ${comicMetadata} WHERE ${comicMetadata.bookId} = ${books.id} AND (${joinSql(credits, sql` OR `)}))`);
+    }
+    return branches.length === 0 ? sql`false` : sql`(${joinSql(branches, sql` OR `)})`;
+  }
+
+  private mediaStatusValueClause(scope: KomgaScope, status: KomgaMediaStatusValue): SQL {
+    if (status !== 'READY' && status !== 'UNSUPPORTED') return sql`false`;
+    return this.mediaStatusClause(scope, [status]) ?? sql`false`;
+  }
+
+  private mediaProfileClause(scope: KomgaScope, profile: KomgaMediaProfile): SQL {
+    const comic = this.comicFileClause();
+    if (profile === 'DIVINA') return comic;
+    if (!scope.includeNonComicBooks) return sql`false`;
+    const pageLayoutPrimary = this.primaryFormatClause(PAGE_LAYOUT_FORMATS);
+    return profile === 'PDF' ? sql`(NOT ${comic} AND ${pageLayoutPrimary})` : sql`(NOT ${comic} AND NOT ${pageLayoutPrimary})`;
+  }
+
+  private primaryFormatClause(formats: readonly string[]): SQL {
+    return exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(bookFiles)
+        .where(and(sql`${bookFiles.id} = ${books.primaryFileId}`, inArray(bookFiles.format, [...formats]))),
+    );
   }
 
   private mediaStatusClause(scope: KomgaScope, statuses: string[] | undefined): SQL | null {
@@ -855,13 +985,7 @@ export class KomgaCatalogRepository {
     const ready = wanted.has('READY');
     const unsupported = wanted.has('UNSUPPORTED');
     if (ready && unsupported) return null;
-    const pageLayoutPrimary = exists(
-      this.db
-        .select({ one: sql`1` })
-        .from(bookFiles)
-        .where(and(sql`${bookFiles.id} = ${books.primaryFileId}`, inArray(bookFiles.format, [...PAGE_LAYOUT_FORMATS]))),
-    );
-    const streamable = sql`(${this.comicFileClause()} OR NOT ${pageLayoutPrimary})`;
+    const streamable = sql`(${this.comicFileClause()} OR NOT ${this.primaryFormatClause(PAGE_LAYOUT_FORMATS)})`;
     if (ready) return streamable;
     if (unsupported && scope.includeNonComicBooks) return sql`NOT ${streamable}`;
     return sql`false`;
@@ -876,13 +1000,7 @@ export class KomgaCatalogRepository {
   private eligibleClause(includeNonComicBooks: boolean): SQL {
     const comic = this.comicFileClause();
     if (!includeNonComicBooks) return comic;
-    const nonComicPrimary = exists(
-      this.db
-        .select({ one: sql`1` })
-        .from(bookFiles)
-        .where(and(sql`${bookFiles.id} = ${books.primaryFileId}`, inArray(bookFiles.format, [...NON_COMIC_VISIBLE_FORMATS]))),
-    );
-    return sql`(${comic} OR ${nonComicPrimary})`;
+    return sql`(${comic} OR ${this.primaryFormatClause(NON_COMIC_VISIBLE_FORMATS)})`;
   }
 
   private comicFileClause(): SQL {
@@ -899,25 +1017,19 @@ export class KomgaCatalogRepository {
       case 'series':
         return [];
       case 'unknown':
-        return [
-          notExists(
-            this.db
-              .select({ one: sql`1` })
-              .from(bookSeriesMemberships)
-              .where(sql`${bookSeriesMemberships.bookId} = ${books.id}`),
-          ),
-        ];
+        return [this.unmemberedClause()];
       case 'oneshot':
-        return [
-          eq(books.id, key.bookId),
-          notExists(
-            this.db
-              .select({ one: sql`1` })
-              .from(bookSeriesMemberships)
-              .where(sql`${bookSeriesMemberships.bookId} = ${books.id}`),
-          ),
-        ];
+        return [eq(books.id, key.bookId), this.unmemberedClause()];
     }
+  }
+
+  private unmemberedClause(): SQL {
+    return notExists(
+      this.db
+        .select({ one: sql`1` })
+        .from(bookSeriesMemberships)
+        .where(sql`${bookSeriesMemberships.bookId} = ${books.id}`),
+    );
   }
 
   private membershipJoin(seriesId: number): SQL {
@@ -988,12 +1100,7 @@ export class KomgaCatalogRepository {
         WHERE ${and(...base)} AND (${books.libraryId}, ${bookSeriesMemberships.seriesId}) IN (${pairs})`);
     }
 
-    const unmembered = notExists(
-      this.db
-        .select({ one: sql`1` })
-        .from(bookSeriesMemberships)
-        .where(sql`${bookSeriesMemberships.bookId} = ${books.id}`),
-    );
+    const unmembered = this.unmemberedClause();
     const unknownLibraries = keys.filter((key) => key.kind === 'unknown').map((key) => key.libraryId);
     if (unknownLibraries.length > 0) {
       branches.push(sql`SELECT ${books.libraryId}::text || '-u' AS key, ${books.id} AS book_id, NULL::varchar AS series_index
@@ -1045,8 +1152,8 @@ export function isLaterProgress(candidate: KomgaProgressRow, current: KomgaProgr
   return candidate.bookFileId > current.bookFileId;
 }
 
-function parseReadStatusFilters(values: string[] | undefined): ReadStatusFilter[] | undefined {
+function parseReadStatusFilters(values: string[] | undefined): KomgaReadStatus[] | undefined {
   if (!values?.length) return undefined;
   const wanted = new Set(values.map((value) => value.trim().toUpperCase()));
-  return READ_STATUS_FILTERS.filter((status) => wanted.has(status));
+  return KOMGA_READ_STATUSES.filter((status) => wanted.has(status));
 }

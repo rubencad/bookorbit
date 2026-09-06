@@ -3,11 +3,12 @@ import { NotFoundException } from '@nestjs/common';
 import type { RequestUser } from '../../../common/types/request-user';
 import type { KomgaRequestAccount } from '../komga-auth.guard';
 import type { KomgaBookRecord, KomgaSeriesRecord } from '../komga-catalog.types';
+import { parseKomgaSeriesSearch } from '../komga-search-condition';
 import { KomgaSeriesService } from '../komga-series.service';
 
 const USER = { id: 1 } as RequestUser;
 const ACCOUNT = { id: 3 } as KomgaRequestAccount;
-const SCOPE = { libraryIds: [2] };
+const SCOPE = { userId: 1, libraryIds: [2, 3] };
 const SERIES: KomgaSeriesRecord = {
   key: { kind: 'series', libraryId: 2, seriesId: 9 },
   name: 'Saga',
@@ -161,6 +162,39 @@ describe('KomgaSeriesService', () => {
     const unpaged = await service.listRecent(USER, ACCOUNT, 'latest', { unpaged: true });
     expect(repository.listSeries).toHaveBeenLastCalledWith(SCOPE, expect.anything(), expect.objectContaining({ unpaged: true, offset: 0 }));
     expect(unpaged.pageable.unpaged).toBe(true);
+  });
+
+  it('searches with the parsed condition, narrows the scope to required libraries and keeps paging bounded', async () => {
+    const { service, repository, libraryService } = makeService();
+    const search = parseKomgaSeriesSearch({
+      condition: { allOf: [{ libraryId: { operator: 'is', value: '3' } }, { tag: { operator: 'is', value: 'space' } }] },
+      fullTextSearch: 'saga',
+    });
+
+    const page = await service.search(USER, ACCOUNT, search, { sort: ['createdDate,desc'], size: 5, unpaged: true });
+
+    expect(libraryService.resolveScope).toHaveBeenCalledWith(USER, ACCOUNT);
+    expect(repository.listSeries).toHaveBeenCalledWith(
+      { ...SCOPE, libraryIds: [3] },
+      { search: 'saga', condition: search.condition },
+      expect.objectContaining({ size: 500, unpaged: false, sort: [{ property: 'createdDate', direction: 'desc' }] }),
+    );
+    expect(repository.aggregateSeries).toHaveBeenCalledWith({ ...SCOPE, libraryIds: [3] }, [SERIES.key]);
+    expect(page.content[0]).toMatchObject({ id: '2-s9', name: 'Saga' });
+    expect(page.totalElements).toBe(1);
+  });
+
+  it('preserves library scope for libraryId conditions inside anyOf', async () => {
+    const { service, repository } = makeService();
+    await service.search(USER, ACCOUNT, parseKomgaSeriesSearch({ condition: { anyOf: [{ libraryId: { operator: 'is', value: '3' } }] } }), {});
+    expect(repository.listSeries).toHaveBeenLastCalledWith(
+      SCOPE,
+      expect.objectContaining({ search: undefined }),
+      expect.objectContaining({ page: 0 }),
+    );
+
+    await service.search(USER, ACCOUNT, parseKomgaSeriesSearch({ condition: { libraryId: { operator: 'is', value: '9' } } }), {});
+    expect(repository.listSeries).toHaveBeenLastCalledWith(expect.objectContaining({ libraryIds: [] }), expect.anything(), expect.anything());
   });
 
   it('keeps the plain series list paged even when a client asks for unpaged', async () => {

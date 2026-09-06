@@ -121,6 +121,7 @@ export const referentialPageQuerySchema = z.object({
 export type ReferentialPageQuery = z.infer<typeof referentialPageQuerySchema>;
 
 export const emptyPageQuerySchema = z.object(pageQuery);
+export type PageOnlyQuery = z.infer<typeof emptyPageQuerySchema>;
 
 export const seriesRecentQuerySchema = z.object({
   ...pageQuery,

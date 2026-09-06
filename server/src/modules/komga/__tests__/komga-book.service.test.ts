@@ -5,6 +5,7 @@ import type { KomgaRequestAccount } from '../komga-auth.guard';
 import { KomgaBookService, pickKomgaFile } from '../komga-book.service';
 import type { KomgaBookHydration, KomgaBookRow } from '../komga-catalog.repository';
 import type { KomgaBookFileRecord, KomgaScope } from '../komga-catalog.types';
+import { parseKomgaBookSearch } from '../komga-search-condition';
 
 const USER = {
   id: 1,
@@ -302,6 +303,43 @@ describe('KomgaBookService', () => {
         seriesTitle: 'Crossover',
         metadata: expect.objectContaining({ numberSort: 4 }),
       });
+    });
+
+    it('searches with the parsed condition and describes books in the required series context', async () => {
+      const memberships = [
+        { bookId: 10, seriesId: 8, seriesName: 'Primary', seriesIndex: '1', displayOrder: 0 },
+        { bookId: 10, seriesId: 9, seriesName: 'Crossover', seriesIndex: '4', displayOrder: 1 },
+      ];
+      const { service, repository, libraryService } = makeService(
+        hydration({ books: [row()], files: new Map([[10, [file()]]]), memberships: new Map([[10, memberships]]) }),
+      );
+      const search = parseKomgaBookSearch({
+        condition: { allOf: [{ seriesId: { operator: 'is', value: '2-s9' } }, { readStatus: { operator: 'is', value: 'UNREAD' } }] },
+        fullTextSearch: 'alpha',
+      });
+
+      const page = await service.search(USER, ACCOUNT, search, { page: 1, size: 10, sort: ['readProgress.readDate,desc'] });
+
+      expect(libraryService.resolveScope).toHaveBeenCalledWith(USER, ACCOUNT);
+      expect(repository.listBooks).toHaveBeenCalledWith(
+        SCOPE,
+        { search: 'alpha', condition: search.condition },
+        expect.objectContaining({ page: 1, size: 10, offset: 10, sort: [{ property: 'readProgress.readDate', direction: 'desc' }] }),
+      );
+      expect(page.totalElements).toBe(1);
+      expect(page.content[0]).toMatchObject({
+        id: '10',
+        seriesId: '2-s9',
+        seriesTitle: 'Crossover',
+        metadata: expect.objectContaining({ numberSort: 4 }),
+      });
+
+      const direct = await service.search(USER, ACCOUNT, parseKomgaBookSearch({ condition: { libraryId: { operator: 'is', value: '2' } } }), {});
+      expect(repository.listBooks).toHaveBeenLastCalledWith(expect.objectContaining({ libraryIds: [2] }), expect.anything(), expect.anything());
+      expect(direct.content[0]).toMatchObject({ seriesId: '2-s8', seriesTitle: 'Primary' });
+
+      await service.search(USER, ACCOUNT, parseKomgaBookSearch({ condition: { libraryId: { operator: 'is', value: '7' } } }), {});
+      expect(repository.listBooks).toHaveBeenLastCalledWith(expect.objectContaining({ libraryIds: [] }), expect.anything(), expect.anything());
     });
 
     it('resolves the download file and its filename', async () => {

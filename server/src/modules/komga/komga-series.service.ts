@@ -3,7 +3,12 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { RequestUser } from '../../common/types/request-user';
 import type { KomgaRequestAccount } from './komga-auth.guard';
 import { KomgaBookService, type KomgaBookDto } from './komga-book.service';
-import { KOMGA_SERIES_BOOK_SORT_PROPERTIES, KOMGA_SERIES_SORT_PROPERTIES, KomgaCatalogRepository } from './komga-catalog.repository';
+import {
+  KOMGA_SERIES_BOOK_SORT_PROPERTIES,
+  KOMGA_SERIES_SORT_PROPERTIES,
+  KomgaCatalogRepository,
+  type KomgaSeriesFilters,
+} from './komga-catalog.repository';
 import type { KomgaBookRecord, KomgaScope, KomgaSeriesAggregate, KomgaSeriesRecord } from './komga-catalog.types';
 import { formatSeriesId, parseSeriesId } from './komga-ids';
 import { KomgaLibraryService } from './komga-library.service';
@@ -15,7 +20,8 @@ import {
   type KomgaRecordPage,
   type KomgaSort,
 } from './komga-page-response';
-import type { SeriesBooksQuery, SeriesListQuery, SeriesRecentQuery } from './komga-query';
+import type { PageOnlyQuery, SeriesBooksQuery, SeriesListQuery, SeriesRecentQuery } from './komga-query';
+import { restrictScopeToCondition, type KomgaSeriesSearch } from './komga-search-condition';
 import { toKomgaBookDto, toKomgaSeriesDto } from './komga.mapper';
 import { KOMGA_UNPAGED_MAX_ROWS } from './komga.constants';
 
@@ -95,7 +101,7 @@ export class KomgaSeriesService {
     if (query.deleted === true) return { records: [], aggregates: new Map(), page, total: 0 };
 
     const scope = await this.libraryService.resolveScope(user, account, query.library_id);
-    const { rows, total } = await this.repository.listSeries(
+    return this.fetchRecords(
       scope,
       {
         search: query.search,
@@ -111,9 +117,27 @@ export class KomgaSeriesService {
       },
       page,
     );
+  }
+
+  async search(user: RequestUser, account: KomgaRequestAccount, search: KomgaSeriesSearch, query: PageOnlyQuery): Promise<KomgaPage<KomgaSeriesDto>> {
+    const page = resolvePageRequest(query, {
+      defaultSort: [{ property: 'metadata.titleSort', direction: 'asc' }],
+      sortableProperties: KOMGA_SERIES_SORT_PROPERTIES,
+    });
+    const scope = restrictScopeToCondition(await this.libraryService.resolveScope(user, account), search.condition);
+    const { records, aggregates, total } = await this.fetchRecords(scope, { search: search.fullTextSearch, condition: search.condition }, page);
+    return buildKomgaPage(
+      records.map((row) => toKomgaSeriesDto(row, aggregates.get(formatSeriesId(row.key))!)),
+      page,
+      total,
+    );
+  }
+
+  private async fetchRecords(scope: KomgaScope, filters: KomgaSeriesFilters, page: KomgaPageRequest): Promise<KomgaSeriesRecordPage> {
+    const { rows, total } = await this.repository.listSeries(scope, filters, page);
     if (page.unpaged && total > KOMGA_UNPAGED_MAX_ROWS) {
       this.logger.warn(
-        `[komga.series_list] [end] userId=${user.id} total=${total} cap=${KOMGA_UNPAGED_MAX_ROWS} - unpaged series list truncated to the cap`,
+        `[komga.series_list] [end] userId=${scope.userId} total=${total} cap=${KOMGA_UNPAGED_MAX_ROWS} - unpaged series list truncated to the cap`,
       );
     }
     const aggregates = await this.repository.aggregateSeries(

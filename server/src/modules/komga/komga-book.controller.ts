@@ -1,4 +1,4 @@
-import { BadRequestException, Get, Headers, Param, Query, Res } from '@nestjs/common';
+import { BadRequestException, Body, Get, Headers, HttpCode, HttpStatus, Param, Post, Query, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -9,7 +9,15 @@ import { KomgaBookService } from './komga-book.service';
 import { sendKomgaBookFile, sendKomgaPageImage } from './komga-file-response';
 import { parseNumericId } from './komga-ids';
 import { KomgaController } from './komga-public.controller';
-import { bookListQuerySchema, bookRecentQuerySchema, pageImageQuerySchema, parseKomgaQuery, type KomgaRawQuery } from './komga-query';
+import {
+  bookListQuerySchema,
+  bookRecentQuerySchema,
+  emptyPageQuerySchema,
+  pageImageQuerySchema,
+  parseKomgaQuery,
+  type KomgaRawQuery,
+} from './komga-query';
+import { parseKomgaBookSearch } from './komga-search-condition';
 import { KomgaThumbnailService } from './komga-thumbnail.service';
 import { toKomgaPageDto } from './komga.mapper';
 
@@ -23,6 +31,12 @@ export class KomgaBookController {
   @Get()
   list(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
     return this.bookService.list(user, account, parseKomgaQuery(bookListQuerySchema, query));
+  }
+
+  @Post('list')
+  @HttpCode(HttpStatus.OK)
+  search(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery, @Body() body: unknown) {
+    return this.bookService.search(user, account, parseKomgaBookSearch(body), parseKomgaQuery(emptyPageQuerySchema, query));
   }
 
   @Get('latest')
