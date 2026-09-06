@@ -102,6 +102,32 @@ describe('KomgaSeriesService', () => {
     expect(page.content[0]).toMatchObject({ id: '2-s9', name: 'Saga', booksCount: 2 });
   });
 
+  it('walks series members in batches without an offset ceiling and stops when the visitor asks', async () => {
+    const { service, repository, bookService } = makeService();
+    repository.listSeriesBooks
+      .mockResolvedValueOnce({ bookIds: [10, 11], total: 3 })
+      .mockResolvedValueOnce({ bookIds: [12], total: 3 })
+      .mockResolvedValueOnce({ bookIds: [10, 11], total: 3 });
+    bookService.buildRecords.mockImplementation((_scope: unknown, ids: number[]) => Promise.resolve(ids.map(bookRecord)));
+    const visit = vi.fn().mockResolvedValue(undefined);
+
+    const { series, total } = await service.forEachBookBatch(USER, ACCOUNT, '2-s9', 2, visit);
+
+    expect(series).toBe(SERIES);
+    expect(total).toBe(3);
+    expect(repository.listSeriesBooks).toHaveBeenNthCalledWith(1, SCOPE, SERIES.key, {}, expect.objectContaining({ page: 0, size: 2, offset: 0 }));
+    expect(repository.listSeriesBooks).toHaveBeenNthCalledWith(2, SCOPE, SERIES.key, {}, expect.objectContaining({ page: 1, size: 2, offset: 2 }));
+    expect(visit.mock.calls.map(([records, offset, count]) => [records.map((record: { id: number }) => record.id), offset, count])).toEqual([
+      [[10, 11], 0, 3],
+      [[12], 2, 3],
+    ]);
+
+    const stopping = vi.fn().mockResolvedValue(false);
+    await service.forEachBookBatch(USER, ACCOUNT, '2-s9', 2, stopping);
+    expect(stopping).toHaveBeenCalledTimes(1);
+    expect(repository.listSeriesBooks).toHaveBeenCalledTimes(3);
+  });
+
   it('orders the recency lists by creation or modification and limits updated to changed series', async () => {
     const { service, repository, libraryService } = makeService();
 

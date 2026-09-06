@@ -25,3 +25,31 @@ export async function mapWithConcurrency<T, R>(items: readonly T[], limit: numbe
   await Promise.all(workers);
   return results;
 }
+
+/**
+ * Runs `worker` over `items` with at most `limit` in flight and settles only once every started
+ * item has finished. Nothing new starts after the first rejection, which is rethrown afterwards, so
+ * a caller that retries never overlaps work that was still running.
+ */
+export async function forEachWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+
+  let nextIndex = 0;
+  const state: { failure: { error: unknown } | null } = { failure: null };
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (state.failure === null && nextIndex < items.length) {
+      const index = nextIndex++;
+      try {
+        await worker(items[index]!, index);
+      } catch (error) {
+        state.failure ??= { error };
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (state.failure) throw state.failure.error;
+}

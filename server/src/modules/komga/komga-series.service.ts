@@ -7,7 +7,14 @@ import { KOMGA_SERIES_BOOK_SORT_PROPERTIES, KOMGA_SERIES_SORT_PROPERTIES, KomgaC
 import type { KomgaBookRecord, KomgaScope, KomgaSeriesAggregate, KomgaSeriesRecord } from './komga-catalog.types';
 import { formatSeriesId, parseSeriesId } from './komga-ids';
 import { KomgaLibraryService } from './komga-library.service';
-import { buildKomgaPage, resolvePageRequest, type KomgaPage, type KomgaRecordPage } from './komga-page-response';
+import {
+  buildKomgaPage,
+  resolvePageRequest,
+  type KomgaPage,
+  type KomgaPageRequest,
+  type KomgaRecordPage,
+  type KomgaSort,
+} from './komga-page-response';
 import type { SeriesBooksQuery, SeriesListQuery, SeriesRecentQuery } from './komga-query';
 import { toKomgaBookDto, toKomgaSeriesDto } from './komga.mapper';
 import { KOMGA_UNPAGED_MAX_ROWS } from './komga.constants';
@@ -122,6 +129,33 @@ export class KomgaSeriesService {
     }
     const records = await this.bookService.buildRecords(scope, bookIds, series.key);
     return { records, page, total, series };
+  }
+
+  // Walks every member in numberSort order without the offset ceiling of the public listing, so bulk
+  // work reaches the whole of a library-sized unknown bucket. Returning false from visit stops early.
+  async forEachBookBatch(
+    user: RequestUser,
+    account: KomgaRequestAccount,
+    seriesId: string,
+    batchSize: number,
+    visit: (records: KomgaBookRecord[], offset: number, total: number) => Promise<boolean | void> | boolean | void,
+  ): Promise<{ series: KomgaSeriesRecord; total: number }> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    const series = await this.requireSeries(scope, seriesId);
+    const sort: KomgaSort[] = [{ property: 'metadata.numberSort', direction: 'asc' }];
+    let offset = 0;
+    let total: number;
+    do {
+      const page: KomgaPageRequest = { page: Math.floor(offset / batchSize), size: batchSize, offset, unpaged: false, sort };
+      const batch = await this.repository.listSeriesBooks(scope, series.key, {}, page);
+      total = batch.total;
+      if (batch.bookIds.length === 0) break;
+      const records = await this.bookService.buildRecords(scope, batch.bookIds, series.key);
+      const batchOffset = offset;
+      offset += batch.bookIds.length;
+      if ((await visit(records, batchOffset, total)) === false) break;
+    } while (offset < total);
+    return { series, total };
   }
 
   async thumbnailBookId(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<number> {

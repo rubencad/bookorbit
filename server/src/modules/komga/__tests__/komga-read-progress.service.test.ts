@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 
 import type { RequestUser } from '../../../common/types/request-user';
 import type { KomgaRequestAccount } from '../komga-auth.guard';
@@ -9,6 +9,8 @@ const USER = { id: 1 } as RequestUser;
 const ACCOUNT = { id: 3 } as KomgaRequestAccount;
 const READ_AT = new Date('2026-03-01T00:00:00Z');
 const SERIES_KEY = { kind: 'series' as const, libraryId: 2, seriesId: 9 };
+// The mock walks series in batches of two so multi-batch behaviour is exercised with small fixtures.
+const MOCK_BATCH_SIZE = 2;
 
 function readState(overrides: Partial<KomgaBookReadState> = {}): KomgaBookReadState {
   return {
@@ -66,7 +68,28 @@ function makeService(records: KomgaBookRecord[] = []) {
       return found ? Promise.resolve(found) : Promise.reject(new NotFoundException('Book not found'));
     }),
   };
-  const seriesService = { listBookRecords: vi.fn().mockResolvedValue({ records, page: {}, total: records.length, series: null }) };
+  const batches: number[] = [];
+  const seriesService = {
+    forEachBookBatch: vi
+      .fn()
+      .mockImplementation(
+        async (
+          _user: RequestUser,
+          _account: KomgaRequestAccount,
+          seriesId: string,
+          _batchSize: number,
+          visit: (batch: KomgaBookRecord[], offset: number, total: number) => Promise<boolean | void> | boolean | void,
+        ) => {
+          if (seriesId === 'missing') throw new NotFoundException('Series not found');
+          for (let offset = 0; offset < records.length; offset += MOCK_BATCH_SIZE) {
+            batches.push(offset);
+            const keepGoing = await visit(records.slice(offset, offset + MOCK_BATCH_SIZE), offset, records.length);
+            if (keepGoing === false) break;
+          }
+          return { series: null, total: records.length };
+        },
+      ),
+  };
   const bookService = {
     getProgress: vi.fn().mockResolvedValue(null),
     saveProgress: vi.fn().mockResolvedValue(undefined),
@@ -75,12 +98,16 @@ function makeService(records: KomgaBookRecord[] = []) {
   };
   const comicPageService = { getManifest: vi.fn().mockResolvedValue({ pages: [{}, {}, {}, {}] }) };
   const service = new KomgaReadProgressService(komgaBookService as never, seriesService as never, bookService as never, comicPageService as never);
-  return { service, komgaBookService, seriesService, bookService, comicPageService };
+  return { service, komgaBookService, seriesService, bookService, comicPageService, batches };
 }
 
 function savedProgress(bookService: ReturnType<typeof makeService>['bookService'], call = 0) {
   const args = bookService.saveProgress.mock.calls[call] as unknown[];
   return { fileId: args[1], dto: args[2] as { pageNumber: number | null; percentage: number; cfi: string | null }, origin: args[4] };
+}
+
+function savedFileIds(bookService: ReturnType<typeof makeService>['bookService']): number[] {
+  return bookService.saveProgress.mock.calls.map((call) => call[1] as number);
 }
 
 describe('summarizeSeriesProgress', () => {
@@ -199,11 +226,18 @@ describe('KomgaReadProgressService', () => {
   });
 
   describe('series operations', () => {
-    it('marks every unfinished member read and skips finished ones', async () => {
-      const { service, bookService } = makeService([record(1, 1, finished), record(2, 2, inProgress), record(3, 3)]);
+    it('marks every unfinished member read across batches and skips finished ones', async () => {
+      const { service, bookService, batches } = makeService([
+        record(1, 1, finished),
+        record(2, 2, inProgress),
+        record(3, 3),
+        record(4, 4, finished),
+        record(5, 5),
+      ]);
       await service.markSeriesRead(USER, ACCOUNT, '2-s9');
 
-      expect(bookService.saveProgress.mock.calls.map((call) => call[1])).toEqual([20, 30]);
+      expect(batches).toEqual([0, 2, 4]);
+      expect(savedFileIds(bookService)).toEqual([20, 30, 50]);
       expect(savedProgress(bookService, 0).dto).toMatchObject({ pageNumber: 2, percentage: 100 });
     });
 
@@ -216,8 +250,8 @@ describe('KomgaReadProgressService', () => {
       expect(bookService.setReadStatus).toHaveBeenCalledWith(1, { status: 'unread' }, USER);
     });
 
-    it('answers the Tachiyomi tracker in both shapes from one ordered listing', async () => {
-      const { service, seriesService } = makeService([record(1, 1, finished), record(2, 2.5, inProgress), record(3, 3)]);
+    it('answers the Tachiyomi tracker in both shapes from a batched walk of the series', async () => {
+      const { service, seriesService, batches } = makeService([record(1, 1, finished), record(2, 2.5, inProgress), record(3, 3)]);
 
       await expect(service.tachiyomiProgressV2(USER, ACCOUNT, '2-s9')).resolves.toEqual({
         booksCount: 3,
@@ -234,14 +268,23 @@ describe('KomgaReadProgressService', () => {
         booksInProgressCount: 1,
         lastReadContinuousIndex: 1,
       });
-      expect(seriesService.listBookRecords).toHaveBeenCalledWith(USER, ACCOUNT, '2-s9', { unpaged: true });
+      expect(seriesService.forEachBookBatch).toHaveBeenCalledWith(USER, ACCOUNT, '2-s9', 500, expect.any(Function));
+      expect(batches).toEqual([0, 2, 0, 2]);
     });
 
-    it('marks books up to the reported numberSort read and never marks anything unread', async () => {
-      const { service, bookService } = makeService([record(1, 1, finished), record(2, 2), record(3, 3, inProgress), record(4, 4)]);
+    it('marks books up to the reported numberSort read, stops walking past it and never marks anything unread', async () => {
+      const { service, bookService, batches } = makeService([
+        record(1, 1, finished),
+        record(2, 2),
+        record(3, 3, inProgress),
+        record(4, 4),
+        record(5, 5),
+        record(6, 6),
+      ]);
       await service.markReadUpToNumberSort(USER, ACCOUNT, '2-s9', 3);
 
-      expect(bookService.saveProgress.mock.calls.map((call) => call[1])).toEqual([20, 30]);
+      expect(savedFileIds(bookService)).toEqual([20, 30]);
+      expect(batches).toEqual([0, 2]);
       expect(bookService.clearFileProgress).not.toHaveBeenCalled();
 
       bookService.saveProgress.mockClear();
@@ -249,19 +292,33 @@ describe('KomgaReadProgressService', () => {
       expect(bookService.saveProgress).not.toHaveBeenCalled();
     });
 
-    it('marks the first lastBookRead books read for the v1 tracker', async () => {
-      const { service, bookService } = makeService([record(1, 1, finished), record(2, 2), record(3, 3), record(4, 4)]);
+    it('marks the requested number of books as read across batch boundaries for the v1 tracker', async () => {
+      const { service, bookService, batches } = makeService([record(1, 1, finished), record(2, 2), record(3, 3), record(4, 4), record(5, 5)]);
       await service.markReadUpToIndex(USER, ACCOUNT, '2-s9', 3);
 
-      expect(bookService.saveProgress.mock.calls.map((call) => call[1])).toEqual([20, 30]);
+      expect(savedFileIds(bookService)).toEqual([20, 30]);
+      expect(batches).toEqual([0, 2]);
     });
 
-    it('surfaces a member failure after the other writes settle', async () => {
+    it('surfaces a member failure after the other writes settle and logs it once', async () => {
       const { service, bookService } = makeService([record(1, 1), record(2, 2)]);
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       bookService.saveProgress.mockRejectedValueOnce(new Error('disk full'));
 
       await expect(service.markSeriesRead(USER, ACCOUNT, '2-s9')).rejects.toThrow('disk full');
       expect(bookService.saveProgress).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[komga.series_read_progress] [fail] seriesId=2-s9 userId=1 action=mark_read'));
+      warn.mockRestore();
+    });
+
+    it('passes an unknown series through as 404 without logging a failure', async () => {
+      const { service } = makeService([]);
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await expect(service.markSeriesRead(USER, ACCOUNT, 'missing')).rejects.toThrow(NotFoundException);
+      await expect(service.tachiyomiProgressV2(USER, ACCOUNT, 'missing')).rejects.toThrow(NotFoundException);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
     });
   });
 });

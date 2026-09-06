@@ -1,8 +1,8 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { isComicContainerFormat } from '../../common/comic-format-detect';
 import type { RequestUser } from '../../common/types/request-user';
-import { mapWithConcurrency } from '../../common/utils/batch.utils';
+import { forEachWithConcurrency } from '../../common/utils/batch.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { ComicPageService } from '../comic-pages/comic-page.service';
@@ -14,6 +14,7 @@ import { KomgaSeriesService } from './komga-series.service';
 import { komgaPagesCount, komgaReadProgressFor } from './komga.mapper';
 
 const SERIES_EVENT = 'komga.series_read_progress';
+const SERIES_BATCH_SIZE = 500;
 const SERIES_WRITE_CONCURRENCY = 5;
 
 export interface KomgaSeriesProgressSummary {
@@ -29,42 +30,60 @@ export interface KomgaSeriesProgressSummary {
 export type KomgaTachiyomiProgressV1 = Omit<KomgaSeriesProgressSummary, 'lastReadContinuousNumberSort' | 'maxNumberSort'>;
 export type KomgaTachiyomiProgressV2 = Omit<KomgaSeriesProgressSummary, 'lastReadContinuousIndex'>;
 
+type SeriesWriteAction = 'mark_read' | 'mark_unread' | 'tachiyomi_v1' | 'tachiyomi_v2';
+
+interface SeriesWritePlan {
+  action: SeriesWriteAction;
+  shouldWrite: (record: KomgaBookRecord, index: number) => boolean;
+  write: (record: KomgaBookRecord) => Promise<void>;
+  finishedAfter?: (records: KomgaBookRecord[], nextIndex: number) => boolean;
+}
+
 export function isKomgaCompleted(record: KomgaBookRecord): boolean {
   return komgaReadProgressFor(record)?.completed === true;
 }
 
-// Records must arrive in numberSort order: the continuous run stops at the first book that is not
-// completed, so an in-progress book in the middle ends it.
-export function summarizeSeriesProgress(records: readonly KomgaBookRecord[]): KomgaSeriesProgressSummary {
-  let booksReadCount = 0;
-  let booksInProgressCount = 0;
-  let lastReadContinuousIndex = 0;
-  let lastReadContinuousNumberSort = 0;
-  let runUnbroken = true;
-  let maxNumberSort = 0;
+// The first incomplete book ends the run, so records must be ordered by numberSort.
+export class SeriesProgressAccumulator {
+  private booksCount = 0;
+  private booksReadCount = 0;
+  private booksInProgressCount = 0;
+  private lastReadContinuousIndex = 0;
+  private lastReadContinuousNumberSort = 0;
+  private runUnbroken = true;
+  private maxNumberSort = 0;
 
-  for (const record of records) {
+  add(record: KomgaBookRecord): void {
     const progress = komgaReadProgressFor(record);
-    if (progress?.completed) booksReadCount += 1;
-    else if (progress) booksInProgressCount += 1;
-    if (runUnbroken && progress?.completed) {
-      lastReadContinuousIndex += 1;
-      lastReadContinuousNumberSort = record.series.numberSort;
+    this.booksCount += 1;
+    if (progress?.completed) this.booksReadCount += 1;
+    else if (progress) this.booksInProgressCount += 1;
+    if (this.runUnbroken && progress?.completed) {
+      this.lastReadContinuousIndex += 1;
+      this.lastReadContinuousNumberSort = record.series.numberSort;
     } else {
-      runUnbroken = false;
+      this.runUnbroken = false;
     }
-    maxNumberSort = Math.max(maxNumberSort, record.series.numberSort);
+    this.maxNumberSort = Math.max(this.maxNumberSort, record.series.numberSort);
   }
 
-  return {
-    booksCount: records.length,
-    booksReadCount,
-    booksUnreadCount: records.length - booksReadCount - booksInProgressCount,
-    booksInProgressCount,
-    lastReadContinuousIndex,
-    lastReadContinuousNumberSort,
-    maxNumberSort,
-  };
+  summary(): KomgaSeriesProgressSummary {
+    return {
+      booksCount: this.booksCount,
+      booksReadCount: this.booksReadCount,
+      booksUnreadCount: this.booksCount - this.booksReadCount - this.booksInProgressCount,
+      booksInProgressCount: this.booksInProgressCount,
+      lastReadContinuousIndex: this.lastReadContinuousIndex,
+      lastReadContinuousNumberSort: this.lastReadContinuousNumberSort,
+      maxNumberSort: this.maxNumberSort,
+    };
+  }
+}
+
+export function summarizeSeriesProgress(records: readonly KomgaBookRecord[]): KomgaSeriesProgressSummary {
+  const accumulator = new SeriesProgressAccumulator();
+  for (const record of records) accumulator.add(record);
+  return accumulator.summary();
 }
 
 @Injectable()
@@ -89,31 +108,23 @@ export class KomgaReadProgressService {
   }
 
   async markSeriesRead(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<void> {
-    const records = await this.seriesRecords(user, account, seriesId);
-    await this.writeSeries(
-      user,
-      seriesId,
-      'mark_read',
-      records,
-      (record) => !isKomgaCompleted(record),
-      (record) => this.writeProgress(user, record, { completed: true }),
-    );
+    await this.writeSeries(user, account, seriesId, {
+      action: 'mark_read',
+      shouldWrite: (record) => !isKomgaCompleted(record),
+      write: (record) => this.writeProgress(user, record, { completed: true }),
+    });
   }
 
   async clearSeries(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<void> {
-    const records = await this.seriesRecords(user, account, seriesId);
-    await this.writeSeries(
-      user,
-      seriesId,
-      'mark_unread',
-      records,
-      (record) => komgaReadProgressFor(record) !== null,
-      (record) => this.clearProgress(user, record),
-    );
+    await this.writeSeries(user, account, seriesId, {
+      action: 'mark_unread',
+      shouldWrite: (record) => komgaReadProgressFor(record) !== null,
+      write: (record) => this.clearProgress(user, record),
+    });
   }
 
   async tachiyomiProgressV1(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<KomgaTachiyomiProgressV1> {
-    const summary = summarizeSeriesProgress(await this.seriesRecords(user, account, seriesId));
+    const summary = await this.summarizeSeries(user, account, seriesId);
     return {
       booksCount: summary.booksCount,
       booksReadCount: summary.booksReadCount,
@@ -124,7 +135,7 @@ export class KomgaReadProgressService {
   }
 
   async tachiyomiProgressV2(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<KomgaTachiyomiProgressV2> {
-    const summary = summarizeSeriesProgress(await this.seriesRecords(user, account, seriesId));
+    const summary = await this.summarizeSeries(user, account, seriesId);
     return {
       booksCount: summary.booksCount,
       booksReadCount: summary.booksReadCount,
@@ -136,58 +147,60 @@ export class KomgaReadProgressService {
   }
 
   async markReadUpToIndex(user: RequestUser, account: KomgaRequestAccount, seriesId: string, lastBookRead: number): Promise<void> {
-    const records = await this.seriesRecords(user, account, seriesId);
-    await this.writeSeries(
-      user,
-      seriesId,
-      'tachiyomi_v1',
-      records,
-      (record, index) => index < lastBookRead && !isKomgaCompleted(record),
-      (record) => this.writeProgress(user, record, { completed: true }),
-    );
+    await this.writeSeries(user, account, seriesId, {
+      action: 'tachiyomi_v1',
+      shouldWrite: (record, index) => index < lastBookRead && !isKomgaCompleted(record),
+      write: (record) => this.writeProgress(user, record, { completed: true }),
+      finishedAfter: (_records, nextIndex) => nextIndex >= lastBookRead,
+    });
   }
 
   async markReadUpToNumberSort(user: RequestUser, account: KomgaRequestAccount, seriesId: string, lastBookNumberSortRead: number): Promise<void> {
-    const records = await this.seriesRecords(user, account, seriesId);
-    await this.writeSeries(
-      user,
-      seriesId,
-      'tachiyomi_v2',
-      records,
-      (record) => record.series.numberSort <= lastBookNumberSortRead && !isKomgaCompleted(record),
-      (record) => this.writeProgress(user, record, { completed: true }),
-    );
+    await this.writeSeries(user, account, seriesId, {
+      action: 'tachiyomi_v2',
+      shouldWrite: (record) => record.series.numberSort <= lastBookNumberSortRead && !isKomgaCompleted(record),
+      write: (record) => this.writeProgress(user, record, { completed: true }),
+      finishedAfter: (records) => (records.at(-1)?.series.numberSort ?? 0) > lastBookNumberSortRead,
+    });
   }
 
-  private async seriesRecords(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<KomgaBookRecord[]> {
-    const { records } = await this.seriesService.listBookRecords(user, account, seriesId, { unpaged: true });
-    return records;
+  private async summarizeSeries(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<KomgaSeriesProgressSummary> {
+    const accumulator = new SeriesProgressAccumulator();
+    await this.seriesService.forEachBookBatch(user, account, seriesId, SERIES_BATCH_SIZE, (records) => {
+      for (const record of records) accumulator.add(record);
+    });
+    return accumulator.summary();
   }
 
-  private async writeSeries(
-    user: RequestUser,
-    seriesId: string,
-    action: string,
-    records: KomgaBookRecord[],
-    shouldWrite: (record: KomgaBookRecord, index: number) => boolean,
-    write: (record: KomgaBookRecord) => Promise<void>,
-  ): Promise<void> {
+  private async writeSeries(user: RequestUser, account: KomgaRequestAccount, seriesId: string, plan: SeriesWritePlan): Promise<void> {
     const startedAt = Date.now();
-    const targets = records.filter(shouldWrite);
-    this.logger.log(
-      `[${SERIES_EVENT}] [start] seriesId=${seriesId} userId=${user.id} action=${action} books=${records.length} targets=${targets.length} - series read progress update started`,
-    );
+    let visited = 0;
+    let attempted = 0;
+    this.logger.log(`[${SERIES_EVENT}] [start] seriesId=${seriesId} userId=${user.id} action=${plan.action} - series read progress update started`);
     try {
-      await mapWithConcurrency(targets, SERIES_WRITE_CONCURRENCY, write);
+      await this.seriesService.forEachBookBatch(user, account, seriesId, SERIES_BATCH_SIZE, async (records, offset, total) => {
+        const targets = records.filter((record, index) => plan.shouldWrite(record, offset + index));
+        attempted += targets.length;
+        await forEachWithConcurrency(targets, SERIES_WRITE_CONCURRENCY, plan.write);
+        visited += records.length;
+        if (total > SERIES_BATCH_SIZE) {
+          this.logger.log(
+            `[${SERIES_EVENT}] [progress] seriesId=${seriesId} userId=${user.id} action=${plan.action} position=${visited} total=${total} durationMs=${Date.now() - startedAt} updated=${attempted} - series read progress update in progress`,
+          );
+        }
+        return plan.finishedAfter?.(records, offset + records.length) ? false : undefined;
+      });
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.warn(
-        `[${SERIES_EVENT}] [fail] seriesId=${seriesId} userId=${user.id} action=${action} durationMs=${Date.now() - startedAt} errorClass=${err.constructor.name} error="${sanitizeLogValue(err.message)}" - series read progress update failed`,
-      );
+      if (!(error instanceof NotFoundException)) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        this.logger.warn(
+          `[${SERIES_EVENT}] [fail] seriesId=${seriesId} userId=${user.id} action=${plan.action} durationMs=${Date.now() - startedAt} visited=${visited} attempted=${attempted} errorClass=${err.constructor.name} error="${sanitizeLogValue(err.message)}" - series read progress update failed`,
+        );
+      }
       throw error;
     }
     this.logger.log(
-      `[${SERIES_EVENT}] [end] seriesId=${seriesId} userId=${user.id} action=${action} durationMs=${Date.now() - startedAt} updated=${targets.length} - series read progress update completed`,
+      `[${SERIES_EVENT}] [end] seriesId=${seriesId} userId=${user.id} action=${plan.action} durationMs=${Date.now() - startedAt} visited=${visited} updated=${attempted} - series read progress update completed`,
     );
   }
 
