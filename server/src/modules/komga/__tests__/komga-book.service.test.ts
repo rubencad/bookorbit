@@ -268,14 +268,18 @@ describe('KomgaBookService', () => {
       expect(repository.listBooks).toHaveBeenCalledWith(SCOPE, expect.objectContaining({ search: 'alpha' }), expect.objectContaining({ size: 10 }));
     });
 
-    it('lists the latest books by creation date regardless of the requested sort', async () => {
+    it('lists the latest books by modification date and honours a bounded unpaged request', async () => {
       const { service, repository } = makeService(hydration({ books: [row()], files: new Map([[10, [file()]]]) }));
       await service.listLatest(USER, ACCOUNT, { library_id: [2], size: 3 });
-      expect(repository.listBooks).toHaveBeenCalledWith(
+      expect(repository.listBooks).toHaveBeenLastCalledWith(
         SCOPE,
         expect.anything(),
-        expect.objectContaining({ size: 3, sort: [{ property: 'createdDate', direction: 'desc' }] }),
+        expect.objectContaining({ size: 3, unpaged: false, sort: [{ property: 'lastModifiedDate', direction: 'desc' }] }),
       );
+
+      const page = await service.listLatest(USER, ACCOUNT, { unpaged: true });
+      expect(repository.listBooks).toHaveBeenLastCalledWith(SCOPE, expect.anything(), expect.objectContaining({ unpaged: true, offset: 0 }));
+      expect(page.pageable.unpaged).toBe(true);
     });
 
     it('describes on deck books in the context of the series they continue', async () => {

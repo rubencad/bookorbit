@@ -1003,6 +1003,12 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       const latestBooks = (await komgaGet('/komga/api/v1/books/latest?size=2', grouped)).json() as KomgaPageBody<BookBody>;
       expect(latestBooks.totalElements).toBe(5);
       expect(latestBooks.content).toHaveLength(2);
+      const allLatest = (await komgaGet('/komga/api/v1/books/latest?unpaged=true', grouped)).json() as KomgaPageBody<BookBody>;
+      expect(allLatest.pageable).toMatchObject({ paged: false, unpaged: true });
+      expect(allLatest.content).toHaveLength(5);
+      const unpagedSeries = (await komgaGet('/komga/api/v1/series/latest?unpaged=true', grouped)).json() as KomgaPageBody<SeriesBody>;
+      expect(unpagedSeries.pageable).toMatchObject({ paged: false, unpaged: true });
+      expect(unpagedSeries.content).toHaveLength(unpagedSeries.totalElements);
 
       const recent = new Map<string, string[]>();
       for (const path of ['new', 'updated', 'latest']) {

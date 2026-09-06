@@ -22,6 +22,11 @@ import { KOMGA_UNPAGED_MAX_ROWS } from './komga.constants';
 export type KomgaSeriesDto = ReturnType<typeof toKomgaSeriesDto>;
 export type KomgaRecentSeriesKind = 'new' | 'updated' | 'latest';
 
+export interface SeriesListOptions {
+  updatedOnly?: boolean;
+  allowUnpaged?: boolean;
+}
+
 export type KomgaSeriesRecordPage = KomgaRecordPage<KomgaSeriesRecord> & { aggregates: Map<string, KomgaSeriesAggregate> };
 
 @Injectable()
@@ -34,8 +39,13 @@ export class KomgaSeriesService {
     private readonly bookService: KomgaBookService,
   ) {}
 
-  async list(user: RequestUser, account: KomgaRequestAccount, query: SeriesListQuery, updatedOnly = false): Promise<KomgaPage<KomgaSeriesDto>> {
-    const { records, aggregates, page, total } = await this.listRecords(user, account, query, updatedOnly);
+  async list(
+    user: RequestUser,
+    account: KomgaRequestAccount,
+    query: SeriesListQuery,
+    options: SeriesListOptions = {},
+  ): Promise<KomgaPage<KomgaSeriesDto>> {
+    const { records, aggregates, page, total } = await this.listRecords(user, account, query, options);
     return buildKomgaPage(
       records.map((row) => toKomgaSeriesDto(row, aggregates.get(formatSeriesId(row.key))!)),
       page,
@@ -53,15 +63,29 @@ export class KomgaSeriesService {
     return this.list(
       user,
       account,
-      { page: query.page, size: query.size, library_id: query.library_id, deleted: query.deleted, oneshot: query.oneshot, sort: [sort] },
-      kind === 'updated',
+      {
+        page: query.page,
+        size: query.size,
+        unpaged: query.unpaged,
+        library_id: query.library_id,
+        deleted: query.deleted,
+        oneshot: query.oneshot,
+        sort: [sort],
+      },
+      { updatedOnly: kind === 'updated', allowUnpaged: true },
     );
   }
 
-  async listRecords(user: RequestUser, account: KomgaRequestAccount, query: SeriesListQuery, updatedOnly = false): Promise<KomgaSeriesRecordPage> {
+  async listRecords(
+    user: RequestUser,
+    account: KomgaRequestAccount,
+    query: SeriesListQuery,
+    options: SeriesListOptions = {},
+  ): Promise<KomgaSeriesRecordPage> {
     const page = resolvePageRequest(query, {
       defaultSort: [{ property: 'metadata.titleSort', direction: 'asc' }],
       sortableProperties: KOMGA_SERIES_SORT_PROPERTIES,
+      allowUnpaged: options.allowUnpaged,
     });
     if (query.deleted === true) return { records: [], aggregates: new Map(), page, total: 0 };
 
@@ -78,10 +102,15 @@ export class KomgaSeriesService {
         authors: query.author,
         readStatuses: query.read_status,
         oneshot: query.oneshot,
-        updatedOnly,
+        updatedOnly: options.updatedOnly === true,
       },
       page,
     );
+    if (page.unpaged && total > KOMGA_UNPAGED_MAX_ROWS) {
+      this.logger.warn(
+        `[komga.series_list] [end] userId=${user.id} total=${total} cap=${KOMGA_UNPAGED_MAX_ROWS} - unpaged series list truncated to the cap`,
+      );
+    }
     const aggregates = await this.repository.aggregateSeries(
       scope,
       rows.map((row) => row.key),

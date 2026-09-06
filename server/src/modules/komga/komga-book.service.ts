@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { basename } from 'path';
 
 import { isComicContainerFormat } from '../../common/comic-format-detect';
@@ -28,7 +28,7 @@ import { KomgaLibraryService } from './komga-library.service';
 import { buildKomgaPage, resolvePageRequest, type KomgaPage, type KomgaRecordPage } from './komga-page-response';
 import type { BookListQuery, BookRecentQuery, PageImageQuery } from './komga-query';
 import { isKomgaVisibleNonComicFormat, toKomgaBookDto } from './komga.mapper';
-import { KOMGA_UNKNOWN_SERIES_TITLE } from './komga.constants';
+import { KOMGA_UNKNOWN_SERIES_TITLE, KOMGA_UNPAGED_MAX_ROWS } from './komga.constants';
 
 export type KomgaBookDto = ReturnType<typeof toKomgaBookDto>;
 
@@ -71,6 +71,8 @@ export function pickKomgaFile(
 
 @Injectable()
 export class KomgaBookService {
+  private readonly logger = new Logger(KomgaBookService.name);
+
   constructor(
     private readonly repository: KomgaCatalogRepository,
     private readonly libraryService: KomgaLibraryService,
@@ -83,10 +85,16 @@ export class KomgaBookService {
     return buildKomgaPage(records.map(toKomgaBookDto), page, total);
   }
 
-  async listRecords(user: RequestUser, account: KomgaRequestAccount, query: BookListQuery): Promise<KomgaRecordPage<KomgaBookRecord>> {
+  async listRecords(
+    user: RequestUser,
+    account: KomgaRequestAccount,
+    query: BookListQuery,
+    options: { allowUnpaged?: boolean } = {},
+  ): Promise<KomgaRecordPage<KomgaBookRecord>> {
     const page = resolvePageRequest(query, {
       defaultSort: [{ property: 'metadata.titleSort', direction: 'asc' }],
       sortableProperties: KOMGA_BOOK_SORT_PROPERTIES,
+      allowUnpaged: options.allowUnpaged,
     });
     if (query.deleted === true) return { records: [], page, total: 0 };
 
@@ -100,8 +108,20 @@ export class KomgaBookService {
     return { records, page, total };
   }
 
-  listLatest(user: RequestUser, account: KomgaRequestAccount, query: BookRecentQuery): Promise<KomgaPage<KomgaBookDto>> {
-    return this.list(user, account, { page: query.page, size: query.size, library_id: query.library_id, sort: ['createdDate,desc'] });
+  // Komga orders this list by modification, so re-scanned books surface next to new ones.
+  async listLatest(user: RequestUser, account: KomgaRequestAccount, query: BookRecentQuery): Promise<KomgaPage<KomgaBookDto>> {
+    const { records, page, total } = await this.listRecords(
+      user,
+      account,
+      { page: query.page, size: query.size, unpaged: query.unpaged, library_id: query.library_id, sort: ['lastModifiedDate,desc'] },
+      { allowUnpaged: true },
+    );
+    if (page.unpaged && total > KOMGA_UNPAGED_MAX_ROWS) {
+      this.logger.warn(
+        `[komga.books_latest] [end] userId=${user.id} total=${total} cap=${KOMGA_UNPAGED_MAX_ROWS} - unpaged latest books truncated to the cap`,
+      );
+    }
+    return buildKomgaPage(records.map(toKomgaBookDto), page, total);
   }
 
   async listOnDeck(user: RequestUser, account: KomgaRequestAccount, query: BookRecentQuery): Promise<KomgaPage<KomgaBookDto>> {

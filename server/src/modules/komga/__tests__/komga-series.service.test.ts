@@ -151,8 +151,18 @@ describe('KomgaSeriesService', () => {
     expect(repository.listSeries).toHaveBeenLastCalledWith(
       SCOPE,
       expect.objectContaining({ updatedOnly: false }),
-      expect.objectContaining({ sort: [{ property: 'lastModifiedDate', direction: 'desc' }] }),
+      expect.objectContaining({ unpaged: false, sort: [{ property: 'lastModifiedDate', direction: 'desc' }] }),
     );
+
+    const unpaged = await service.listRecent(USER, ACCOUNT, 'latest', { unpaged: true });
+    expect(repository.listSeries).toHaveBeenLastCalledWith(SCOPE, expect.anything(), expect.objectContaining({ unpaged: true, offset: 0 }));
+    expect(unpaged.pageable.unpaged).toBe(true);
+  });
+
+  it('keeps the plain series list paged even when a client asks for unpaged', async () => {
+    const { service, repository } = makeService();
+    await service.list(USER, ACCOUNT, { unpaged: true });
+    expect(repository.listSeries).toHaveBeenLastCalledWith(SCOPE, expect.anything(), expect.objectContaining({ unpaged: false, size: 500 }));
   });
 
   it('returns an empty page for deleted=true without querying', async () => {
