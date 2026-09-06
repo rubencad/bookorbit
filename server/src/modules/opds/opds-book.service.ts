@@ -122,6 +122,7 @@ export interface OpdsBookEntry {
   folderPath: string;
   addedAt: Date;
   updatedAt: Date;
+  contentUpdatedAt: Date;
   description: string | null;
   seriesId: number | null;
   seriesName: string | null;
@@ -881,6 +882,7 @@ export class OpdsBookService {
           pageCount: bookFiles.pageCount,
           pageMediaType: bookFiles.pageMediaType,
           absolutePath: bookFiles.absolutePath,
+          updatedAt: bookFiles.updatedAt,
         })
         .from(bookFiles)
         .innerJoin(books, eq(books.id, bookFiles.bookId))
@@ -898,11 +900,13 @@ export class OpdsBookService {
 
     const filesByBook = new Map<number, { id: number; format: string }[]>();
     const comicFileByBook = new Map<number, ComicFileRow>();
+    const fileUpdatedByBook = new Map<number, Date>();
     for (const row of fileRows) {
       if (row.role !== 'content') continue;
       const list = filesByBook.get(row.bookId) ?? [];
       list.push({ id: row.id, format: row.format ?? 'unknown' });
       filesByBook.set(row.bookId, list);
+      fileUpdatedByBook.set(row.bookId, latestDate(row.updatedAt, fileUpdatedByBook.get(row.bookId)));
       if (isComicContainerFormat(row.format) && !comicFileByBook.has(row.bookId)) {
         comicFileByBook.set(row.bookId, {
           id: row.id,
@@ -924,12 +928,14 @@ export class OpdsBookService {
       .map((row) => {
         const contextSeries = contextSeriesByBook.get(row.id);
         const comicFile = comicFileByBook.get(row.id);
+        const progress = comicFile ? (progressByFile.get(comicFile.id) ?? null) : null;
         return {
           id: row.id,
           title: row.title ?? row.folderPath.split('/').pop() ?? 'Untitled',
           folderPath: row.folderPath,
           addedAt: row.addedAt,
           updatedAt: row.bookUpdatedAt,
+          contentUpdatedAt: latestDate(row.bookUpdatedAt, fileUpdatedByBook.get(row.id), progress?.lastReadAt),
           description: row.description,
           seriesId: contextSeries?.seriesId ?? row.seriesId,
           seriesName: contextSeries?.seriesName ?? row.seriesName,
@@ -943,7 +949,7 @@ export class OpdsBookService {
           comicFile: comicFile
             ? { id: comicFile.id, format: comicFile.format, pageCount: comicFile.pageCount, pageMediaType: comicFile.pageMediaType }
             : null,
-          progress: comicFile ? (progressByFile.get(comicFile.id) ?? null) : null,
+          progress,
         };
       })
       .sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
@@ -1041,6 +1047,14 @@ export class OpdsBookService {
       .where(and(...conditions))
       .orderBy(bookSeriesMemberships.displayOrder, bookSeriesMemberships.seriesId);
   }
+}
+
+function latestDate(base: Date, ...others: (Date | null | undefined)[]): Date {
+  let latest = base;
+  for (const other of others) {
+    if (other && other > latest) latest = other;
+  }
+  return latest;
 }
 
 function normalizeIsbnSearchTerm(value: string): string {

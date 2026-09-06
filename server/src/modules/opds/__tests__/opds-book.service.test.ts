@@ -362,6 +362,45 @@ describe('OpdsBookService', () => {
       expect(comicPageService.queuePageCount).not.toHaveBeenCalled();
     });
 
+    it('uses newer file and reading-progress timestamps as the content version', async () => {
+      const fileRows = [
+        {
+          bookId: 1,
+          id: 11,
+          format: 'cbz',
+          role: 'content',
+          pageCount: 24,
+          pageMediaType: 'image/jpeg',
+          absolutePath: '/books/comic-1/a.cbz',
+          updatedAt: new Date('2026-04-01'),
+        },
+        {
+          bookId: 2,
+          id: 21,
+          format: 'epub',
+          role: 'content',
+          pageCount: null,
+          pageMediaType: null,
+          absolutePath: '/books/comic-2/b.epub',
+          updatedAt: new Date('2026-06-01'),
+        },
+      ];
+      const lastReadAt = new Date('2026-05-01T00:00:00Z');
+      const progressRows = [{ bookFileId: 11, pageNumber: 5, lastReadAt }];
+      const { service } = makeService([[metaRow(1), metaRow(2)], [], fileRows, progressRows]);
+
+      const entries = (await testable(service).fetchBookEntries([1, 2], { userId: 7 })) as {
+        id: number;
+        updatedAt: Date;
+        contentUpdatedAt: Date;
+      }[];
+
+      expect(entries.map((entry) => [entry.id, entry.updatedAt, entry.contentUpdatedAt])).toEqual([
+        [1, new Date('2026-01-02'), lastReadAt],
+        [2, new Date('2026-01-02'), new Date('2026-06-01')],
+      ]);
+    });
+
     it('skips the progress query without a reader and when no entry has a comic file', async () => {
       const comicOnly = makeService([
         [metaRow(1)],

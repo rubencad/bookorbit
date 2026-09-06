@@ -173,7 +173,7 @@ export class OpdsService {
     lines.push('<entry>');
     lines.push(`  ${xmlEl('title', book.title)}`);
     lines.push(`  ${xmlEl('id', `urn:bookorbit:book:${book.id}`)}`);
-    lines.push(`  ${xmlEl('updated', book.updatedAt.toISOString())}`);
+    lines.push(`  ${xmlEl('updated', book.contentUpdatedAt.toISOString())}`);
 
     for (const author of book.authors) {
       lines.push(`  <author>${xmlEl('name', author)}</author>`);

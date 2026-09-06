@@ -16,6 +16,7 @@ function sampleBook(overrides?: Partial<OpdsBookEntry>): OpdsBookEntry {
     folderPath: '/books/mistborn',
     addedAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-02'),
+    contentUpdatedAt: new Date('2025-01-02'),
     description: 'A fantasy novel by Brandon Sanderson',
     seriesId: 1,
     seriesName: 'Mistborn',
@@ -51,7 +52,23 @@ function streamLinkLine(xml: string): string | undefined {
   return xml.split('\n').find((line) => line.includes('opds-pse/stream'));
 }
 
+function entryUpdatedLine(xml: string): string | undefined {
+  return xml
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith('<updated>'))
+    .at(-1);
+}
+
 describe('OpdsService', () => {
+  describe('entry updated', () => {
+    it('reports the content version rather than the book row timestamp', () => {
+      const contentUpdatedAt = new Date('2026-03-04T05:06:07.000Z');
+      const xml = acquisitionFeed([sampleBook({ updatedAt: new Date('2025-01-02'), contentUpdatedAt })]);
+
+      expect(entryUpdatedLine(xml)).toContain(`<updated>${contentUpdatedAt.toISOString()}</updated>`);
+    });
+  });
+
   describe('generateRootNavigation', () => {
     it('produces valid OPDS navigation XML', () => {
       const service = makeService();
