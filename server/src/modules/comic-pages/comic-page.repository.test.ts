@@ -55,4 +55,25 @@ describe('ComicPageRepository', () => {
     expect(query.params).toEqual([7, 'content', 'cbz', 'cbr', 'cb7', 'present']);
     expect(limit).toHaveBeenCalledWith(500);
   });
+
+  it('selects missing page metadata after the cursor in file ID order', async () => {
+    const rows = [{ id: 12, absolutePath: '/books/a.cbz', format: 'cbz', pageCount: null, pageMediaType: null }];
+    const limit = vi.fn().mockResolvedValue(rows);
+    const orderBy = vi.fn().mockReturnValue({ limit });
+    const where = vi.fn().mockReturnValue({ orderBy });
+    const innerJoin = vi.fn().mockReturnValue({ where });
+    const from = vi.fn().mockReturnValue({ innerJoin });
+    const select = vi.fn().mockReturnValue({ from });
+    const repository = new ComicPageRepository({ select } as any);
+
+    await expect(repository.findFilesMissingPageInfoAfter(11, 200)).resolves.toEqual(rows);
+
+    const query = new PgDialect().sqlToQuery(where.mock.calls[0][0]);
+    expect(query.sql).toContain('"book_files"."id" > $1');
+    expect(query.sql).not.toContain('library_folder_id');
+    expect(query.sql).toContain('("book_files"."page_count" is null or "book_files"."page_media_type" is null)');
+    expect(query.params).toEqual([11, 'content', 'cbz', 'cbr', 'cb7', 'present']);
+    expect(orderBy).toHaveBeenCalledTimes(1);
+    expect(limit).toHaveBeenCalledWith(200);
+  });
 });

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { COMIC_CONTAINER_FORMATS } from '../../common/comic-format-detect';
@@ -36,8 +36,32 @@ export class ComicPageRepository {
       .limit(limit);
   }
 
+  async findFilesMissingPageInfoAfter(afterId: number, limit: number) {
+    return this.db
+      .select({
+        id: schema.bookFiles.id,
+        absolutePath: schema.bookFiles.absolutePath,
+        format: schema.bookFiles.format,
+        pageCount: schema.bookFiles.pageCount,
+        pageMediaType: schema.bookFiles.pageMediaType,
+      })
+      .from(schema.bookFiles)
+      .innerJoin(schema.books, eq(schema.books.id, schema.bookFiles.bookId))
+      .where(
+        and(
+          gt(schema.bookFiles.id, afterId),
+          eq(schema.bookFiles.role, 'content'),
+          inArray(schema.bookFiles.format, [...COMIC_CONTAINER_FORMATS]),
+          or(isNull(schema.bookFiles.pageCount), isNull(schema.bookFiles.pageMediaType)),
+          eq(schema.books.status, 'present'),
+        ),
+      )
+      .orderBy(schema.bookFiles.id)
+      .limit(limit);
+  }
+
   async updatePageCount(fileId: number, pageCount: number | null, pageMediaType: string | null): Promise<void> {
-    // Do not bump updatedAt when derived page metadata is unchanged; it is used by some clients as a content version.
+    // Preserve updatedAt when these values are unchanged because OPDS and KOReader use it as a content version.
     await this.db
       .update(schema.bookFiles)
       .set({ pageCount, pageMediaType })

@@ -38,6 +38,7 @@
   `[event] [phase] key=value ... - short message`
 - Valid phases are:
   - `[start]`
+  - `[progress]`
   - `[end]`
   - `[fail]`
 - Do not use dotted phase style like `fetch.start` / `fetch.end` / `fetch.fail`.
@@ -53,6 +54,9 @@ When to add start/end/fail logs:
   - orchestration/background jobs
   - destructive operations (delete/merge/bulk update)
 
+Use `[progress]` only for bulk work that runs long enough that silence between `[start]` and
+`[end]` is indistinguishable from a stall. Emit it per batch, never per item.
+
 When to avoid start/end logs:
 
 - Chatty hot paths (simple reads, access checks, tiny helper methods)
@@ -62,6 +66,7 @@ When to avoid start/end logs:
 Required fields:
 
 - `[start]`: primary IDs + key input flags
+- `[progress]`: primary IDs + resume position + `durationMs` + cumulative counters
 - `[end]`: primary IDs + `durationMs` + outcome counters/flags
 - `[fail]`: primary IDs + `durationMs` + `errorClass` + `error="<sanitized message>"`
 
