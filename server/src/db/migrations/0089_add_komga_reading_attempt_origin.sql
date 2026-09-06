@@ -1,0 +1,2 @@
+ALTER TABLE "reading_attempts" DROP CONSTRAINT "reading_attempts_origin_chk";--> statement-breakpoint
+ALTER TABLE "reading_attempts" ADD CONSTRAINT "reading_attempts_origin_chk" CHECK ("reading_attempts"."origin" in ('manual', 'bookorbit', 'kobo', 'koreader', 'komga', 'hardcover', 'migration'));

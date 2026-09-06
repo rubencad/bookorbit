@@ -78,7 +78,7 @@ export const readingAttempts = pgTable(
       .on(t.userId, t.externalProvider, t.externalId)
       .where(sql`${t.externalProvider} is not null and ${t.externalId} is not null`),
     check('reading_attempts_outcome_chk', sql`${t.outcome} is null or ${t.outcome} in ('completed', 'skimmed', 'abandoned')`),
-    check('reading_attempts_origin_chk', sql`${t.origin} in ('manual', 'bookorbit', 'kobo', 'koreader', 'hardcover', 'migration')`),
+    check('reading_attempts_origin_chk', sql`${t.origin} in ('manual', 'bookorbit', 'kobo', 'koreader', 'komga', 'hardcover', 'migration')`),
     check('reading_attempts_end_after_start_chk', sql`${t.endedOn} is null or ${t.startedOn} is null or ${t.endedOn} >= ${t.startedOn}`),
     check('reading_attempts_closed_has_outcome_chk', sql`${t.endedOn} is null or ${t.outcome} is not null`),
   ],

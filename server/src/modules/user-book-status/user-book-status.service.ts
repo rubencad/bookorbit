@@ -21,7 +21,7 @@ type ManualStatusPatch = {
 
 export type AutoReadingActivity = {
   occurredOn?: string;
-  origin?: 'bookorbit' | 'kobo' | 'koreader';
+  origin?: 'bookorbit' | 'kobo' | 'koreader' | 'komga';
   strongRereadEvidence?: boolean;
   meaningfulActivity?: boolean;
 };
