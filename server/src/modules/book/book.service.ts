@@ -2102,7 +2102,7 @@ export class BookService {
     await this.bookRepo.syncKoboReadingStateFromProgress(userId, fileId, percentage, null, null, null, null);
   }
 
-  async saveProgress(userId: number, fileId: number, dto: SaveProgressDto, user: RequestUser) {
+  async saveProgress(userId: number, fileId: number, dto: SaveProgressDto, user: RequestUser, origin?: AutoReadingActivity['origin']) {
     const file = await this.verifyFileAccess(fileId, user);
     const previous = await this.bookRepo.findProgress(userId, fileId);
     await this.bookRepo.upsertProgress(
@@ -2130,12 +2130,13 @@ export class BookService {
       );
     }
     const strongRereadEvidence = previous != null && previous.percentage - dto.percentage >= 10;
-    await this.autoUpdateReadStatusForProgress(
-      userId,
-      file,
-      dto.percentage,
-      strongRereadEvidence ? { origin: 'bookorbit', strongRereadEvidence: true } : {},
-    );
+    const activity: AutoReadingActivity = {};
+    if (origin) activity.origin = origin;
+    if (strongRereadEvidence) {
+      activity.origin = origin ?? 'bookorbit';
+      activity.strongRereadEvidence = true;
+    }
+    await this.autoUpdateReadStatusForProgress(userId, file, dto.percentage, activity);
   }
 
   async clearFileProgress(userId: number, fileId: number, user: RequestUser): Promise<void> {

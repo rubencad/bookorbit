@@ -2532,6 +2532,23 @@ describe('BookService', () => {
       expect(bookRepo.isKoboTwoWayProgressSyncEnabled).not.toHaveBeenCalled();
       expect(bookRepo.syncKoboReadingStateFromProgress).not.toHaveBeenCalled();
     });
+
+    it('attributes the status update to the caller origin', async () => {
+      const { service, bookRepo, libraryService, userBookStatusService } = makeService();
+      const user = makeUser();
+
+      bookRepo.findFileById.mockResolvedValue({ id: 9, bookId: 12, libraryId: 2, absolutePath: '/books/c.cbz', format: 'cbz' });
+      bookRepo.upsertProgress.mockResolvedValue(undefined);
+      libraryService.verifyUserAccess.mockResolvedValue(undefined);
+      libraryService.findOne = vi.fn().mockResolvedValue({ readingThreshold: 3, markAsFinishedPercentComplete: 97 });
+
+      await service.saveProgress(user.id, 9, { pageNumber: 4, percentage: 40 } as never, user, 'komga');
+      expect(userBookStatusService.autoUpdate).toHaveBeenLastCalledWith(user.id, 12, 40, 3, 97, { origin: 'komga' });
+
+      bookRepo.findProgress.mockResolvedValueOnce({ percentage: 90 });
+      await service.saveProgress(user.id, 9, { pageNumber: 1, percentage: 10 } as never, user, 'komga');
+      expect(userBookStatusService.autoUpdate).toHaveBeenLastCalledWith(user.id, 12, 10, 3, 97, { origin: 'komga', strongRereadEvidence: true });
+    });
   });
 
   describe('clearFileProgress', () => {
