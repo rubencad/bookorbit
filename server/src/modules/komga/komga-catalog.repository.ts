@@ -204,7 +204,7 @@ const BOOK_SORT_COLUMNS: Record<string, (userId: number) => SQL> = {
   lastModifiedDate: () => sql`${books.updatedAt}`,
   fileLastModified: () => sql`${books.updatedAt}`,
   'metadata.releaseDate': () => sql`${bookMetadata.publishedDate}`,
-  'readProgress.readDate': (userId) => latestReadAtSql(userId),
+  'readProgress.readDate': (userId) => readDateSql(userId),
   'metadata.numberSort': () => sql`lower(${bookMetadata.title})`,
 };
 export const KOMGA_BOOK_SORT_PROPERTIES = Object.keys(BOOK_SORT_COLUMNS);
@@ -239,10 +239,20 @@ function bookSortSql(sort: KomgaSort, userId: number): SQL {
   return sql`${(BOOK_SORT_COLUMNS[sort.property] ?? BOOK_SORT_COLUMNS.name)(userId)} ${direction(sort.direction)}`;
 }
 
-function latestReadAtSql(userId: number): SQL {
+function progressReadAtSql(userId: number): SQL {
   return sql`(SELECT max(${readingProgress.lastReadAt}) FROM ${readingProgress}
     INNER JOIN ${bookFiles} ON ${bookFiles.id} = ${readingProgress.bookFileId}
     WHERE ${bookFiles.bookId} = ${books.id} AND ${bookFiles.role} = 'content' AND ${readingProgress.userId} = ${userId})`;
+}
+
+function statusReadAtSql(userId: number): SQL {
+  return sql`(SELECT max(coalesce(${userBookStatus.finishedAt}, ${userBookStatus.updatedAt})) FROM ${userBookStatus} WHERE ${userBookStatus.bookId} = ${books.id} AND ${userBookStatus.userId} = ${userId} AND ${userBookStatus.status} = 'read')`;
+}
+
+// Mirrors komgaReadProgressFor: a progress row dates the read, a status-only read falls back to
+// its completion date.
+function readDateSql(userId: number): SQL {
+  return sql`coalesce(${progressReadAtSql(userId)}, ${statusReadAtSql(userId)})`;
 }
 
 @Injectable()
@@ -718,7 +728,7 @@ export class KomgaCatalogRepository {
     const { read, inProgress } = this.readStateClauses(scope.userId);
     const readCount = sql`count(*) FILTER (WHERE ${read})`;
     const inProgressCount = sql`count(*) FILTER (WHERE ${inProgress})`;
-    const lastReadAt = this.lastReadAtSql(scope.userId);
+    const lastReadAt = statusReadAtSql(scope.userId);
     const groupedCounts = sql`${readCount}::integer AS books_read_count, ${inProgressCount}::integer AS books_in_progress_count, max(${lastReadAt}) AS last_read_at`;
     const groupedReadStatus = readStatuses
       ? joinSql(
@@ -782,10 +792,6 @@ export class KomgaCatalogRepository {
 
     if (branches.length === 0) return null;
     return joinSql(branches, sql` UNION ALL `);
-  }
-
-  private lastReadAtSql(userId: number): SQL {
-    return sql`(SELECT max(coalesce(${userBookStatus.finishedAt}, ${userBookStatus.updatedAt})) FROM ${userBookStatus} WHERE ${userBookStatus.bookId} = ${books.id} AND ${userBookStatus.userId} = ${userId} AND ${userBookStatus.status} = 'read')`;
   }
 
   // A book's progress is the most recently read of its content files, the same row the book DTO

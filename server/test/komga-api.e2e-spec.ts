@@ -1269,11 +1269,28 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
 
     it("filters and sorts search results by the caller's read state", async () => {
       expect((await komgaSend('PATCH', `/komga/api/v1/books/${alphaOne.bookId}/read-progress`, grouped, { page: 1 })).statusCode).toBe(204);
+      const markedRead = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/books/${alphaTwo.bookId}/status`,
+        headers: authHeader(owner.accessToken),
+        payload: { status: 'read' },
+      });
+      expect(markedRead.statusCode).toBe(200);
       try {
         expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual(['Alpha One']);
-        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'isNot', value: 'UNREAD' } } }))).toEqual(['Alpha One']);
-        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'UNREAD' } } }))).toHaveLength(4);
-        expect(bookNames(await searchBooks(grouped, {}, '?sort=readProgress.readDate,desc'))[0]).toBe('Alpha One');
+        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'READ' } } }))).toEqual(['Alpha Two']);
+        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'isNot', value: 'UNREAD' } } }))).toEqual([
+          'Alpha One',
+          'Alpha Two',
+        ]);
+        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'UNREAD' } } }))).toHaveLength(3);
+
+        const byReadDate = await searchBooks(grouped, {}, '?sort=readProgress.readDate,desc');
+        const dated = byReadDate.content.filter((book) => book.readProgress !== null);
+        expect(dated.map((book) => book.name).sort()).toEqual(['Alpha One', 'Alpha Two']);
+        expect(byReadDate.content.slice(0, 2)).toEqual(dated);
+        const readDates = dated.map((book) => book.readProgress!.readDate);
+        expect(readDates).toEqual([...readDates].sort().reverse());
         expect(seriesNames(await searchSeries(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual([
           seriesAName,
         ]);
@@ -1284,10 +1301,17 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
         expect(bookNames(await searchBooks(filteredCredentials, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual(
           [],
         );
-        expect(bookNames(await searchBooks(flat, { condition: { readStatus: { operator: 'is', value: 'READ' } } }))).toEqual(['Manual']);
+        expect(bookNames(await searchBooks(flat, { condition: { readStatus: { operator: 'is', value: 'READ' } } }))).toEqual(['Alpha Two', 'Manual']);
         expect(seriesNames(await searchSeries(flat, { condition: { readStatus: { operator: 'is', value: 'READ' } } }))).toEqual(['Manual']);
       } finally {
         expect((await komgaSend('DELETE', `/komga/api/v1/books/${alphaOne.bookId}/read-progress`, grouped)).statusCode).toBe(204);
+        const unmarked = await ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/books/${alphaTwo.bookId}/status`,
+          headers: authHeader(owner.accessToken),
+          payload: { status: 'unread' },
+        });
+        expect(unmarked.statusCode).toBe(200);
       }
       expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual([]);
     });
