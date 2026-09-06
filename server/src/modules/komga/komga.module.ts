@@ -17,6 +17,8 @@ import { KomgaListController } from './komga-list.controller';
 import { KomgaMeController } from './komga-me.controller';
 import { KomgaOpdsController } from './komga-opds.controller';
 import { KomgaOpdsService } from './komga-opds.service';
+import { KomgaReadProgressController } from './komga-read-progress.controller';
+import { KomgaReadProgressService } from './komga-read-progress.service';
 import { KomgaReferentialController } from './komga-referential.controller';
 import { KomgaReferentialService } from './komga-referential.service';
 import { KomgaSeriesController } from './komga-series.controller';
@@ -37,6 +39,7 @@ import { KomgaUserService } from './komga-user.service';
     KomgaSeriesController,
     KomgaBookController,
     KomgaReferentialController,
+    KomgaReadProgressController,
     KomgaListController,
     KomgaOpdsController,
     KomgaFallbackController,
@@ -51,6 +54,7 @@ import { KomgaUserService } from './komga-user.service';
     KomgaBookService,
     KomgaSeriesService,
     KomgaReferentialService,
+    KomgaReadProgressService,
     KomgaThumbnailService,
     KomgaOpdsService,
   ],

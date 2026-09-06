@@ -101,10 +101,12 @@ export class KomgaBookService {
   }
 
   async get(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookDto> {
+    return toKomgaBookDto(await this.getRecord(user, account, bookId));
+  }
+
+  async getRecord(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookRecord> {
     const scope = await this.libraryService.resolveScope(user, account);
-    const [record] = await this.buildRecords(scope, [await this.requireVisibleBook(scope, bookId)]);
-    if (!record) throw new NotFoundException('Book not found');
-    return toKomgaBookDto(record);
+    return this.requireRecord(scope, bookId);
   }
 
   async listPages(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<ComicPageEntry[]> {
@@ -253,9 +255,14 @@ export class KomgaBookService {
     return visible;
   }
 
-  private async resolveFile(scope: KomgaScope, bookId: number): Promise<KomgaBookFile> {
+  private async requireRecord(scope: KomgaScope, bookId: number): Promise<KomgaBookRecord> {
     const [record] = await this.buildRecords(scope, [await this.requireVisibleBook(scope, bookId)]);
     if (!record) throw new NotFoundException('Book not found');
+    return record;
+  }
+
+  private async resolveFile(scope: KomgaScope, bookId: number): Promise<KomgaBookFile> {
+    const record = await this.requireRecord(scope, bookId);
     return { bookId, file: record.file };
   }
 

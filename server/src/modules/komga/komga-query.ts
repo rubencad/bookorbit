@@ -122,10 +122,34 @@ export type ReferentialPageQuery = z.infer<typeof referentialPageQuerySchema>;
 
 export const emptyPageQuerySchema = z.object(pageQuery);
 
+export const readProgressUpdateSchema = z.object({
+  page: z.number().int().nullable().optional(),
+  completed: z.boolean().nullable().optional(),
+});
+export type ReadProgressUpdate = z.infer<typeof readProgressUpdateSchema>;
+
+export const tachiyomiProgressUpdateV1Schema = z.object({
+  lastBookRead: z.number().int().min(0),
+});
+export type TachiyomiProgressUpdateV1 = z.infer<typeof tachiyomiProgressUpdateV1Schema>;
+
+export const tachiyomiProgressUpdateV2Schema = z.object({
+  lastBookNumberSortRead: z.number().finite(),
+});
+export type TachiyomiProgressUpdateV2 = z.infer<typeof tachiyomiProgressUpdateV2Schema>;
+
 export function parseKomgaQuery<T>(schema: z.ZodType<T>, query: KomgaRawQuery | undefined): T {
   const result = schema.safeParse(query ?? {});
   if (result.success) return result.data;
   const issue = result.error.issues[0];
   const field = issue?.path.join('.') || 'query';
   throw new BadRequestException(`Invalid query parameter ${field}: ${issue?.message ?? 'invalid value'}`);
+}
+
+export function parseKomgaBody<T>(schema: z.ZodType<T>, body: unknown): T {
+  const result = schema.safeParse(body ?? {});
+  if (result.success) return result.data;
+  const issue = result.error.issues[0];
+  const field = issue?.path.join('.') || 'body';
+  throw new BadRequestException(`Invalid request body ${field}: ${issue?.message ?? 'invalid value'}`);
 }

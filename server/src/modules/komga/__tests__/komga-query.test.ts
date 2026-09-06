@@ -1,6 +1,16 @@
 import { BadRequestException } from '@nestjs/common';
 
-import { bookListQuerySchema, pageImageQuerySchema, parseKomgaQuery, referentialQuerySchema, seriesListQuerySchema } from '../komga-query';
+import {
+  bookListQuerySchema,
+  pageImageQuerySchema,
+  parseKomgaBody,
+  parseKomgaQuery,
+  readProgressUpdateSchema,
+  referentialQuerySchema,
+  seriesListQuerySchema,
+  tachiyomiProgressUpdateV1Schema,
+  tachiyomiProgressUpdateV2Schema,
+} from '../komga-query';
 
 describe('komga query parsing', () => {
   it('accepts comma joined and repeated list parameters', () => {
@@ -41,6 +51,15 @@ describe('komga query parsing', () => {
   it('accepts repeated read status filters on series and book lists', () => {
     expect(parseKomgaQuery(seriesListQuerySchema, { read_status: ['UNREAD', 'IN_PROGRESS'] }).read_status).toEqual(['UNREAD', 'IN_PROGRESS']);
     expect(parseKomgaQuery(bookListQuerySchema, { read_status: 'READ' }).read_status).toEqual(['READ']);
+  });
+
+  it('parses read progress bodies and reports the offending field', () => {
+    expect(parseKomgaBody(readProgressUpdateSchema, { page: 4, completed: null, extra: true })).toEqual({ page: 4, completed: null });
+    expect(parseKomgaBody(readProgressUpdateSchema, undefined)).toEqual({});
+    expect(() => parseKomgaBody(readProgressUpdateSchema, { page: 1.5 })).toThrow(/page/);
+    expect(() => parseKomgaBody(tachiyomiProgressUpdateV2Schema, { lastBookNumberSortRead: 'x' })).toThrow(BadRequestException);
+    expect(parseKomgaBody(tachiyomiProgressUpdateV2Schema, { lastBookNumberSortRead: 12.5 })).toEqual({ lastBookNumberSortRead: 12.5 });
+    expect(parseKomgaBody(tachiyomiProgressUpdateV1Schema, { lastBookRead: 0 })).toEqual({ lastBookRead: 0 });
   });
 
   it('validates page image conversion targets', () => {
