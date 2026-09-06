@@ -1,4 +1,4 @@
-import { KomgaCatalogRepository } from '../komga-catalog.repository';
+import { KomgaCatalogRepository, isLaterProgress, type KomgaProgressRow } from '../komga-catalog.repository';
 import type { KomgaScope } from '../komga-catalog.types';
 
 const SCOPE: KomgaScope = {
@@ -253,5 +253,31 @@ describe('KomgaCatalogRepository', () => {
     });
     expect(await repository.resolveSeriesNumbering(SCOPE, [])).toEqual(new Map());
     expect(db.execute).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('isLaterProgress', () => {
+  function progress(overrides: Partial<KomgaProgressRow>): KomgaProgressRow {
+    return {
+      bookId: 1,
+      bookFileId: 10,
+      pageNumber: null,
+      percentage: 50,
+      lastReadAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      ...overrides,
+    };
+  }
+
+  it('prefers the most recent read, then the most recent write, then the highest file id', () => {
+    const base = progress({});
+    expect(isLaterProgress(progress({ lastReadAt: new Date('2026-01-02T00:00:00Z') }), base)).toBe(true);
+    expect(isLaterProgress(progress({ lastReadAt: new Date('2025-12-31T00:00:00Z'), updatedAt: new Date('2026-02-01T00:00:00Z') }), base)).toBe(
+      false,
+    );
+    expect(isLaterProgress(progress({ updatedAt: new Date('2026-01-01T00:00:01Z') }), base)).toBe(true);
+    expect(isLaterProgress(progress({ bookFileId: 11 }), base)).toBe(true);
+    expect(isLaterProgress(progress({ bookFileId: 9 }), base)).toBe(false);
+    expect(isLaterProgress(progress({}), base)).toBe(false);
   });
 });

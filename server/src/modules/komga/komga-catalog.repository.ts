@@ -592,7 +592,7 @@ export class KomgaCatalogRepository {
     }
     for (const row of progressRows) {
       const current = hydration.progress.get(row.bookId);
-      if (!current || row.lastReadAt > current.lastReadAt) hydration.progress.set(row.bookId, row);
+      if (!current || isLaterProgress(row, current)) hydration.progress.set(row.bookId, row);
     }
     for (const row of statusRows) hydration.statuses.set(row.bookId, row);
     for (const row of resetRows) hydration.resets.set(row.bookId, new Date(row.resetAt));
@@ -772,7 +772,7 @@ export class KomgaCatalogRepository {
     const latestPercentage = sql`(SELECT ${readingProgress.percentage} FROM ${readingProgress}
       INNER JOIN ${bookFiles} ON ${bookFiles.id} = ${readingProgress.bookFileId}
       WHERE ${bookFiles.bookId} = ${books.id} AND ${bookFiles.role} = 'content' AND ${readingProgress.userId} = ${userId}
-      ORDER BY ${readingProgress.lastReadAt} DESC LIMIT 1)`;
+      ORDER BY ${readingProgress.lastReadAt} DESC, ${readingProgress.updatedAt} DESC, ${readingProgress.bookFileId} DESC LIMIT 1)`;
     const statusRead = exists(
       this.db
         .select({ one: sql`1` })
@@ -1035,6 +1035,14 @@ function toSeriesRecord(row: SeriesSourceRow): KomgaSeriesRecord {
 
 function matchesTitle(title: string, search: string): boolean {
   return title.toLowerCase().includes(search.trim().toLowerCase());
+}
+
+// Mirrors the ORDER BY of the latest-progress subquery in readStateClauses so hydration and the SQL
+// predicates settle ties between rows the same way.
+export function isLaterProgress(candidate: KomgaProgressRow, current: KomgaProgressRow): boolean {
+  if (candidate.lastReadAt.getTime() !== current.lastReadAt.getTime()) return candidate.lastReadAt > current.lastReadAt;
+  if (candidate.updatedAt.getTime() !== current.updatedAt.getTime()) return candidate.updatedAt > current.updatedAt;
+  return candidate.bookFileId > current.bookFileId;
 }
 
 function parseReadStatusFilters(values: string[] | undefined): ReadStatusFilter[] | undefined {
