@@ -108,6 +108,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
 
   const ownerEmail = `komga-owner-${randomUUID().slice(0, 8)}@example.com`;
   const comicLibraryName = `komga-comics-${randomUUID()}`;
+  const hiddenLibraryName = `komga-hidden-${randomUUID()}`;
   const seriesAName = `Series A ${randomUUID().slice(0, 6)}`;
   const seriesBName = `Series B ${randomUUID().slice(0, 6)}`;
   const matureTag = `mature-${randomUUID().slice(0, 6)}`;
@@ -117,7 +118,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     ctx = await createKomgaE2EContext();
 
     comicLibrary = await createLibraryWithFolder(ctx, { name: comicLibraryName });
-    hiddenLibrary = await createLibraryWithFolder(ctx, { name: `komga-hidden-${randomUUID()}` });
+    hiddenLibrary = await createLibraryWithFolder(ctx, { name: hiddenLibraryName });
 
     const twoJpegPages = [
       { path: 'pages/001.jpg', content: COMIC_PAGE_JPEG },
@@ -782,6 +783,107 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       const deleted = await ctx.app.inject({ method: 'DELETE', url: `/api/v1/komga-users/${accountId}`, headers: authHeader(owner.accessToken) });
       expect(deleted.statusCode).toBe(204);
       expect((await komgaGet('/komga/api/v1/libraries', { username, password: 'MihonPassword123' })).statusCode).toBe(401);
+    });
+  });
+
+  describe('OPDS feed', () => {
+    it('challenges the OPDS catalog without credentials', async () => {
+      const response = await komgaGet('/komga/opds/v1.2/catalog');
+      expect(response.statusCode).toBe(401);
+      expect(response.headers['www-authenticate']).toBe('Basic realm="bookorbit Komga"');
+    });
+
+    it('serves the catalog from the bare /opds address clients are given', async () => {
+      const response = await komgaGet('/komga/opds', grouped);
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('kind=navigation');
+      expect(response.body).toContain('<name>Komga</name>');
+      expect(response.body).toContain('href="/komga/opds/v1.2/series"');
+    });
+
+    it('lists only libraries the account can reach', async () => {
+      const response = await komgaGet('/komga/opds/v1.2/libraries', grouped);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain(comicLibraryName);
+      expect(response.body).not.toContain(hiddenLibraryName);
+      expect(response.body).toContain(`href="/komga/opds/v1.2/libraries/${comicLibrary.libraryId}"`);
+    });
+
+    it('routes series/latest ahead of the series id parameter', async () => {
+      const response = await komgaGet('/komga/opds/v1.2/series/latest', grouped);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('<title>Latest series</title>');
+    });
+
+    it('filters the series feed by search term', async () => {
+      const response = await komgaGet(`/komga/opds/v1.2/series?search=${encodeURIComponent(seriesBName)}`, grouped);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain(seriesBName);
+      expect(response.body).not.toContain(seriesAName);
+    });
+
+    it('includes page-stream links for books in a series', async () => {
+      const seriesId = `${comicLibrary.libraryId}-s${seriesAId}`;
+      const response = await komgaGet(`/komga/opds/v1.2/series/${seriesId}`, grouped);
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('kind=acquisition');
+      expect(response.body).toContain(`<id>${alphaOne.bookId}</id>`);
+
+      const streamHref = `/komga/opds/v1.2/books/${alphaOne.bookId}/pages/{pageNumber}?convert=jpeg`;
+      expect(response.body).toContain(`href="${streamHref.replace('&', '&amp;')}"`);
+      expect(response.body).toContain('pse:count="2"');
+    });
+
+    it('maps OPDS page 0 to REST page 1', async () => {
+      const first = await komgaGet(`/komga/opds/v1.2/books/${alphaOne.bookId}/pages/0`, grouped);
+      const rest = await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}/pages/1`, grouped);
+      expect(first.statusCode).toBe(200);
+      expect(rest.statusCode).toBe(200);
+      expect(first.rawPayload.equals(rest.rawPayload)).toBe(true);
+
+      const last = await komgaGet(`/komga/opds/v1.2/books/${alphaOne.bookId}/pages/1`, grouped);
+      expect(last.statusCode).toBe(200);
+
+      const beyond = await komgaGet(`/komga/opds/v1.2/books/${alphaOne.bookId}/pages/2`, grouped);
+      expect(beyond.statusCode).toBe(400);
+    });
+
+    it('serves book thumbnails and downloads from the feed links', async () => {
+      const thumbnail = await komgaGet(`/komga/opds/v1.2/books/${alphaOne.bookId}/thumbnail/small`, grouped);
+      expect(thumbnail.statusCode).toBe(200);
+      expect(thumbnail.headers['content-type']).toBe('image/jpeg');
+
+      const download = await komgaGet(`/komga/opds/v1.2/books/${alphaOne.bookId}/file/alpha-one.cbz`, grouped);
+      expect(download.statusCode).toBe(200);
+      expect(download.headers['content-type']).toContain('application/vnd.comicbook+zip');
+    });
+
+    it('hides books filtered out for the account', async () => {
+      const seriesId = `${comicLibrary.libraryId}-s${seriesAId}`;
+      const response = await komgaGet(`/komga/opds/v1.2/series/${seriesId}`, filteredCredentials);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain(`<id>${alphaTwo.bookId}</id>`);
+    });
+
+    it('refuses a library the account cannot reach', async () => {
+      expect((await komgaGet(`/komga/opds/v1.2/libraries/${hiddenLibrary.libraryId}`, grouped)).statusCode).toBe(403);
+    });
+
+    it('serves the OpenSearch description that drives client search', async () => {
+      const response = await komgaGet('/komga/opds/v1.2/search', grouped);
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('opensearchdescription');
+      expect(response.body).toContain('template="/komga/opds/v1.2/series?search={searchTerms}"');
+    });
+
+    it('refuses the whole feed while the Komga API is disabled', async () => {
+      await setKomgaApiEnabled(false);
+      try {
+        const response = await komgaGet('/komga/opds/v1.2/catalog', grouped);
+        expect(response.statusCode).toBe(403);
+      } finally {
+        await setKomgaApiEnabled(true);
+      }
     });
   });
 
