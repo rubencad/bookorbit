@@ -3,6 +3,7 @@
 BookOrbit exposes a Komga-compatible API so comic reader apps built for [Komga](https://komga.org)
 can browse your libraries and read comics page by page without downloading whole archives. Mihon
 and the Tachiyomi forks, Suwayomi, Komelia and Paperback all connect through their Komga source.
+Panels connects through the Komga OPDS feed the same API serves.
 
 The API is read-only: it serves what BookOrbit already knows about your books. Nothing a client
 does through it changes your library.
@@ -65,6 +66,23 @@ model without changing anything:
 Series ids look like `12-s34`, `12-u` or `12-b567` (library, then series, unknown bucket or
 one-shot book). Book ids are BookOrbit book ids. Clients treat both as opaque strings.
 
+## The OPDS feed
+
+Komga clients are split on how they browse. Mihon and its forks use the REST API under
+`/komga/api/v1`; Panels uses Komga's OPDS feed. Both are served from the same address and the same
+Komga account, so there is nothing extra to enable.
+
+The feed lives at `https://your-host/komga/opds/v1.2/catalog`, and the bare
+`https://your-host/komga/opds` answers the same catalog for clients that are given that address.
+It offers all series, latest series, latest books and a per-library series list, plus search. Books
+carry an OPDS-PSE page streaming link, so Panels reads a comic page by page instead of downloading
+the archive.
+
+This is a separate feed from BookOrbit's own OPDS catalog at `/api/v1/opds`. That one serves your
+whole library to general ebook readers using OPDS accounts and the OPDS toggle. The Komga feed
+shows the comic library the way Komga clients expect it, uses Komga accounts, and follows the Komga
+API toggle.
+
 ## Setting up a client
 
 **Mihon, TachiyomiSY, J2K, Suwayomi**: install the Komga extension, open its settings, add a
@@ -76,6 +94,10 @@ because the account carries no admin role; browsing, reading and downloads work.
 
 **Paperback**: add the Komga source and enter the same address and credentials.
 
+**Panels**: Library > Connect Service > OPDS, then enter the address and the account username and
+password. Panels finds the feed itself, so `https://your-host/komga` is enough; if it insists on a
+URL ending in OPDS, use `https://your-host/komga/opds`.
+
 If a client asks for a URL ending in `/api/v1`, use the address exactly as shown; the `/api/v1`
 part is added by the client.
 
@@ -83,11 +105,12 @@ part is added by the client.
 
 - **Read progress** from Komga clients is not synced yet. Marking a chapter read in Mihon does not
   reach BookOrbit, and progress made in the web reader is not shown to Komga clients. Every book
-  reports as unread. This is the next Komga release.
+  reports as unread, and the OPDS feed carries no `pse:lastRead`, so Panels reopens a comic at page
+  one and its page turns do not reach the server. This is the next Komga release.
 - **Search and list endpoints** used by newer clients (`POST /series/list`, `POST /books/list`) are
   not implemented. Mihon and its forks use the older list endpoints, which are.
-- **Read lists and collections** answer with empty lists. Collections and smart scopes are planned
-  to appear as Komga read lists.
+- **Read lists and collections** answer with empty lists and are left out of the OPDS catalog.
+  Collections and smart scopes are planned to appear as Komga read lists.
 - **Reading direction** is always left to right until the metadata field exists.
 - **PDF page streaming**: PDFs are listed as unsupported and can only be downloaded.
 - Server management endpoints (scans, metadata edits, users, settings) are deliberately not
@@ -105,5 +128,8 @@ part is added by the client.
   library scan, fills the count in.
 - **Chapters are in the wrong order**: set series indexes on the books. Books without an index are
   appended after the numbered ones.
-- **Behind a reverse proxy**: forward `/komga` to BookOrbit exactly like `/api`. The path must not
-  fall through to the web app.
+- **Panels says it needs a URL ending in OPDS**: it could not reach the feed. Check that the Komga
+  API is enabled and that a reverse proxy forwards `/komga` whole, then enter
+  `https://your-host/komga/opds`.
+- **Behind a reverse proxy**: forward `/komga` to BookOrbit exactly like `/api`. This covers both
+  `/komga/api` and `/komga/opds`. The path must not fall through to the web app.
