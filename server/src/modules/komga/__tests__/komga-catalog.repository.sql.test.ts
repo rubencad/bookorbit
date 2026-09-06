@@ -65,4 +65,14 @@ describe('KomgaCatalogRepository SQL', () => {
     expect(listing.slice(listing.lastIndexOf(') AS series WHERE'))).toContain('series.release_date < $');
     expect(listing.match(/min\("book_metadata"\."published_date"\)/g)).toHaveLength(1);
   });
+
+  it('keeps member conditions inside the library of the series row', async () => {
+    const { repository, queries } = makeRepository();
+    const { condition } = parseKomgaSeriesSearch({ condition: { tag: { operator: 'is', value: 'space' } } });
+    await repository.listSeries({ ...SCOPE, libraryIds: [2, 3] }, { condition }, PAGE);
+
+    const [listing] = queries;
+    const outer = listing.slice(listing.lastIndexOf(') AS series WHERE'));
+    expect(outer).toContain('"books"."library_id" = series.library_id AND');
+  });
 });

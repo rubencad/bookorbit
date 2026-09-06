@@ -936,7 +936,7 @@ export class KomgaCatalogRepository {
     return {
       book: this.bookPredicates(scope),
       memberExists: (predicate) =>
-        sql`EXISTS (SELECT 1 FROM ${books} WHERE ${books.id} IN (${memberIds}) AND ${and(...this.baseClauses(scope))} AND ${predicate})`,
+        sql`EXISTS (SELECT 1 FROM ${books} WHERE ${books.id} IN (${memberIds}) AND ${books.libraryId} = series.library_id AND ${and(...this.baseClauses(scope))} AND ${predicate})`,
       releaseDate: () => sql`series.release_date`,
     };
   }

@@ -92,6 +92,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
   let disabledParent!: TestUserSession;
   let revokedParent!: TestUserSession;
   let filteredReader!: TestUserSession;
+  let superuser!: TestUserSession;
 
   let comicLibrary!: CreatedLibrary;
   let hiddenLibrary!: CreatedLibrary;
@@ -115,6 +116,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
   let disabledCredentials!: Credentials;
   let revokedCredentials!: Credentials;
   let filteredCredentials!: Credentials;
+  let superuserCredentials!: Credentials;
 
   const ownerEmail = `komga-owner-${randomUUID().slice(0, 8)}@example.com`;
   const comicLibraryName = `komga-comics-${randomUUID()}`;
@@ -123,6 +125,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
   const seriesBName = `Series B ${randomUUID().slice(0, 6)}`;
   const matureTag = `mature-${randomUUID().slice(0, 6)}`;
   const writerName = `Jane Writer ${randomUUID().slice(0, 6)}`;
+  const hiddenTag = `hidden-${randomUUID().slice(0, 6)}`;
 
   beforeAll(async () => {
     ctx = await createKomgaE2EContext();
@@ -183,8 +186,10 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     await seedMembership(crossover.bookId, seriesBId, '1', 0);
     await seedMembership(crossover.bookId, seriesAId, '3', 1);
     await seedMembership(alphaLoose.bookId, seriesAId, null, 0);
+    await seedMembership(hiddenComic.bookId, seriesAId, '9', 0);
 
     const matureTagId = await seedTag(alphaTwo.bookId, matureTag);
+    await seedTag(hiddenComic.bookId, hiddenTag);
     await seedAuthor(alphaOne.bookId, writerName);
     await createBookCoverArtifacts(ctx, alphaOne.bookId, { thumbnailContent: Buffer.from(`thumb-${alphaOne.bookId}`) });
 
@@ -194,6 +199,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     disabledParent = await createUserAndLogin(ctx, { permissions: [Permission.KomgaAccess] });
     revokedParent = await createUserAndLogin(ctx, { permissions: [] });
     filteredReader = await createUserAndLogin(ctx, { permissions: [Permission.KomgaAccess] });
+    superuser = await createUserAndLogin(ctx, { permissions: [], isSuperuser: true });
 
     await grantLibraryAccess(ctx, owner.userId, comicLibrary.libraryId, 'viewer');
     await grantLibraryAccess(ctx, disabledParent.userId, comicLibrary.libraryId, 'viewer');
@@ -208,6 +214,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     disabledCredentials = await credentialsFor(disabledParent.userId, {});
     revokedCredentials = await credentialsFor(revokedParent.userId, {});
     filteredCredentials = await credentialsFor(filteredReader.userId, {});
+    superuserCredentials = await credentialsFor(superuser.userId, {});
   }, 180_000);
 
   afterAll(async () => {
@@ -1332,6 +1339,21 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
         expect(unmarked.statusCode).toBe(200);
       }
       expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual([]);
+    });
+
+    it('keeps member conditions inside the library of each series row', async () => {
+      const seriesIds = (page: KomgaPageBody<SeriesBody>) => page.content.map((series) => series.id);
+      const comicA = `${comicLibrary.libraryId}-s${seriesAId}`;
+      const hiddenA = `${hiddenLibrary.libraryId}-s${seriesAId}`;
+
+      const everything = await searchSeries(superuserCredentials, {});
+      expect(seriesIds(everything)).toEqual(expect.arrayContaining([comicA, hiddenA]));
+      expect(seriesIds(await searchSeries(superuserCredentials, { condition: { tag: { operator: 'is', value: hiddenTag } } }))).toEqual([hiddenA]);
+      expect(seriesIds(await searchSeries(superuserCredentials, { condition: { tag: { operator: 'is', value: matureTag } } }))).toEqual([comicA]);
+      const withoutHidden = seriesIds(await searchSeries(superuserCredentials, { condition: { tag: { operator: 'isNot', value: hiddenTag } } }));
+      expect(withoutHidden).toContain(comicA);
+      expect(withoutHidden).not.toContain(hiddenA);
+      expect(seriesIds(await searchSeries(grouped, { condition: { tag: { operator: 'is', value: hiddenTag } } }))).toEqual([]);
     });
 
     it('hides filtered books from search results', async () => {
