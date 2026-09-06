@@ -122,6 +122,20 @@ export type ReferentialPageQuery = z.infer<typeof referentialPageQuerySchema>;
 
 export const emptyPageQuerySchema = z.object(pageQuery);
 
+export const seriesRecentQuerySchema = z.object({
+  ...pageQuery,
+  library_id: idList,
+  deleted: flag,
+  oneshot: flag,
+});
+export type SeriesRecentQuery = z.infer<typeof seriesRecentQuerySchema>;
+
+export const bookRecentQuerySchema = z.object({
+  ...pageQuery,
+  library_id: idList,
+});
+export type BookRecentQuery = z.infer<typeof bookRecentQuerySchema>;
+
 export const readProgressUpdateSchema = z.object({
   page: z.number().int().nullable().optional(),
   completed: z.boolean().nullable().optional(),

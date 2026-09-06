@@ -9,7 +9,7 @@ import { KomgaBookService } from './komga-book.service';
 import { sendKomgaBookFile, sendKomgaPageImage } from './komga-file-response';
 import { parseNumericId } from './komga-ids';
 import { KomgaController } from './komga-public.controller';
-import { bookListQuerySchema, pageImageQuerySchema, parseKomgaQuery, type KomgaRawQuery } from './komga-query';
+import { bookListQuerySchema, bookRecentQuerySchema, pageImageQuerySchema, parseKomgaQuery, type KomgaRawQuery } from './komga-query';
 import { KomgaThumbnailService } from './komga-thumbnail.service';
 import { toKomgaPageDto } from './komga.mapper';
 
@@ -23,6 +23,16 @@ export class KomgaBookController {
   @Get()
   list(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
     return this.bookService.list(user, account, parseKomgaQuery(bookListQuerySchema, query));
+  }
+
+  @Get('latest')
+  latest(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
+    return this.bookService.listLatest(user, account, parseKomgaQuery(bookRecentQuerySchema, query));
+  }
+
+  @Get('ondeck')
+  onDeck(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
+    return this.bookService.listOnDeck(user, account, parseKomgaQuery(bookRecentQuerySchema, query));
   }
 
   @Get(':bookId')

@@ -112,6 +112,44 @@ describe('KomgaCatalogRepository', () => {
     expect(rows[2]).toMatchObject({ booksReadCount: 1, booksInProgressCount: 0 });
   });
 
+  it('pairs each on deck series with its first unread book and skips scopes without libraries', async () => {
+    const seriesRow = {
+      name: 'Saga',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-02T00:00:00Z',
+      expected_book_count: null,
+      last_read_at: null,
+    };
+    const { repository, db } = makeRepository([
+      {
+        rows: [
+          { ...seriesRow, library_id: 2, series_id: 9, book_id: null, books_count: 3, books_read_count: 1, books_in_progress_count: 0 },
+          { ...seriesRow, library_id: 2, series_id: null, book_id: null, books_count: 2, books_read_count: 1, books_in_progress_count: 0 },
+        ],
+      },
+      { rows: [{ total: '2' }] },
+      {
+        rows: [
+          { key: '2-u', book_id: 30 },
+          { key: '2-s9', book_id: 11 },
+        ],
+      },
+    ]);
+
+    await expect(repository.listOnDeck(SCOPE, PAGE)).resolves.toEqual({
+      entries: [
+        { key: { kind: 'series', libraryId: 2, seriesId: 9 }, bookId: 11 },
+        { key: { kind: 'unknown', libraryId: 2 }, bookId: 30 },
+      ],
+      total: 2,
+    });
+    expect(db.execute).toHaveBeenCalledTimes(3);
+
+    const empty = makeRepository();
+    await expect(empty.repository.listOnDeck({ ...SCOPE, libraryIds: [] }, PAGE)).resolves.toEqual({ entries: [], total: 0 });
+    expect(empty.db.execute).not.toHaveBeenCalled();
+  });
+
   it('returns no series when every requested read status is unknown', async () => {
     const { repository, db } = makeRepository();
     await expect(repository.listSeries(SCOPE, { readStatuses: ['SKIMMED'] }, PAGE)).resolves.toEqual({ rows: [], total: 0 });

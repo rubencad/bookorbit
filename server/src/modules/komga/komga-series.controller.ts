@@ -6,7 +6,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { KomgaAccount } from './komga-account.decorator';
 import type { KomgaRequestAccount } from './komga-auth.guard';
 import { KomgaController } from './komga-public.controller';
-import { parseKomgaQuery, seriesBooksQuerySchema, seriesListQuerySchema, type KomgaRawQuery } from './komga-query';
+import { parseKomgaQuery, seriesBooksQuerySchema, seriesListQuerySchema, seriesRecentQuerySchema, type KomgaRawQuery } from './komga-query';
 import { KomgaSeriesService } from './komga-series.service';
 import { KomgaThumbnailService } from './komga-thumbnail.service';
 
@@ -20,6 +20,21 @@ export class KomgaSeriesController {
   @Get()
   list(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
     return this.seriesService.list(user, account, parseKomgaQuery(seriesListQuerySchema, query));
+  }
+
+  @Get('new')
+  newSeries(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
+    return this.seriesService.listRecent(user, account, 'new', parseKomgaQuery(seriesRecentQuerySchema, query));
+  }
+
+  @Get('updated')
+  updatedSeries(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
+    return this.seriesService.listRecent(user, account, 'updated', parseKomgaQuery(seriesRecentQuerySchema, query));
+  }
+
+  @Get('latest')
+  latestSeries(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Query() query: KomgaRawQuery) {
+    return this.seriesService.listRecent(user, account, 'latest', parseKomgaQuery(seriesRecentQuerySchema, query));
   }
 
   @Get(':seriesId')

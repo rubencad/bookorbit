@@ -2,12 +2,14 @@ import { BadRequestException } from '@nestjs/common';
 
 import {
   bookListQuerySchema,
+  bookRecentQuerySchema,
   pageImageQuerySchema,
   parseKomgaBody,
   parseKomgaQuery,
   readProgressUpdateSchema,
   referentialQuerySchema,
   seriesListQuerySchema,
+  seriesRecentQuerySchema,
   tachiyomiProgressUpdateV1Schema,
   tachiyomiProgressUpdateV2Schema,
 } from '../komga-query';
@@ -46,6 +48,19 @@ describe('komga query parsing', () => {
       unknown
     >;
     expect(parsed).toEqual({ search: 'x' });
+  });
+
+  it('keeps only paging and library filters on the recency lists', () => {
+    expect(parseKomgaQuery(seriesRecentQuerySchema, { library_id: '2', oneshot: 'false', sort: 'name,asc', search: 'x', page: '1' })).toEqual({
+      library_id: [2],
+      oneshot: false,
+      sort: ['name,asc'],
+      page: 1,
+    });
+    expect(parseKomgaQuery(bookRecentQuerySchema, { library_id: ['2', '3'], read_status: 'READ', size: '10' })).toEqual({
+      library_id: [2, 3],
+      size: 10,
+    });
   });
 
   it('accepts repeated read status filters on series and book lists', () => {

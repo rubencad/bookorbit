@@ -52,6 +52,12 @@ export interface KomgaSeriesFilters {
   authors?: string[];
   readStatuses?: string[];
   oneshot?: boolean;
+  updatedOnly?: boolean;
+}
+
+export interface KomgaOnDeckEntry {
+  key: KomgaSeriesKey;
+  bookId: number;
 }
 
 export interface KomgaBookFilters {
@@ -150,6 +156,7 @@ type SeriesSourceRow = {
   books_count: number;
   books_read_count: number;
   books_in_progress_count: number;
+  last_read_at: Date | null;
   created_at: Date;
   updated_at: Date;
   expected_book_count: number | null;
@@ -243,12 +250,51 @@ export class KomgaCatalogRepository {
       sql`, `,
     );
 
+    const listed = filters.updatedOnly ? sql`SELECT * FROM (${source}) AS updated WHERE updated.created_at <> updated.updated_at` : source;
     const [pageResult, countResult] = await Promise.all([
-      this.db.execute<SeriesSourceRow>(sql`SELECT * FROM (${source}) AS series ORDER BY ${orderBy} LIMIT ${page.size} OFFSET ${page.offset}`),
-      this.db.execute<{ total: string }>(sql`SELECT count(*)::text AS total FROM (${source}) AS series`),
+      this.db.execute<SeriesSourceRow>(sql`SELECT * FROM (${listed}) AS series ORDER BY ${orderBy} LIMIT ${page.size} OFFSET ${page.offset}`),
+      this.db.execute<{ total: string }>(sql`SELECT count(*)::text AS total FROM (${listed}) AS series`),
     ]);
 
     return { rows: pageResult.rows.map(toSeriesRecord), total: Number(countResult.rows[0]?.total ?? 0) };
+  }
+
+  async listOnDeck(scope: KomgaScope, page: KomgaPageRequest): Promise<{ entries: KomgaOnDeckEntry[]; total: number }> {
+    const source = this.seriesSource(scope, {});
+    if (!source) return { entries: [], total: 0 };
+    const candidates = sql`SELECT * FROM (${source}) AS deck WHERE deck.books_read_count > 0 AND deck.books_in_progress_count = 0 AND deck.books_read_count < deck.books_count`;
+    const orderBy = sql`series.last_read_at DESC NULLS LAST, series.updated_at DESC, series.library_id ASC, series.series_id ASC NULLS LAST, series.book_id ASC NULLS LAST`;
+
+    const [pageResult, countResult] = await Promise.all([
+      this.db.execute<SeriesSourceRow>(sql`SELECT * FROM (${candidates}) AS series ORDER BY ${orderBy} LIMIT ${page.size} OFFSET ${page.offset}`),
+      this.db.execute<{ total: string }>(sql`SELECT count(*)::text AS total FROM (${candidates}) AS series`),
+    ]);
+    const total = Number(countResult.rows[0]?.total ?? 0);
+    const series = pageResult.rows.map(toSeriesRecord);
+    if (series.length === 0) return { entries: [], total };
+
+    const members = this.membersCte(
+      scope,
+      series.map((row) => row.key),
+    );
+    const { read, inProgress } = this.readStateClauses(scope.userId);
+    const nextUnread = await this.db.execute<{ key: string; book_id: number }>(
+      sql`WITH members AS (${members})
+      SELECT DISTINCT ON (members.key) members.key, members.book_id
+      FROM members
+      INNER JOIN ${books} ON ${books.id} = members.book_id
+      LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = members.book_id
+      WHERE NOT ${read} AND NOT ${inProgress}
+      ORDER BY members.key, ${joinSql(seriesIndexOrderBy(sql`members.series_index`, 'ASC'), sql`, `)}, lower(${bookMetadata.title}) ASC NULLS LAST, members.book_id ASC`,
+    );
+    const nextByKey = new Map(nextUnread.rows.map((row) => [row.key, row.book_id]));
+
+    const entries: KomgaOnDeckEntry[] = [];
+    for (const row of series) {
+      const bookId = nextByKey.get(formatSeriesId(row.key));
+      if (bookId !== undefined) entries.push({ key: row.key, bookId });
+    }
+    return { entries, total };
   }
 
   async findSeries(scope: KomgaScope, key: KomgaSeriesKey): Promise<KomgaSeriesRecord | null> {
@@ -630,7 +676,8 @@ export class KomgaCatalogRepository {
     const { read, inProgress } = this.readStateClauses(scope.userId);
     const readCount = sql`count(*) FILTER (WHERE ${read})`;
     const inProgressCount = sql`count(*) FILTER (WHERE ${inProgress})`;
-    const groupedCounts = sql`${readCount}::integer AS books_read_count, ${inProgressCount}::integer AS books_in_progress_count`;
+    const lastReadAt = this.lastReadAtSql(scope.userId);
+    const groupedCounts = sql`${readCount}::integer AS books_read_count, ${inProgressCount}::integer AS books_in_progress_count, max(${lastReadAt}) AS last_read_at`;
     const groupedReadStatus = readStatuses
       ? joinSql(
           readStatuses.map((status) => {
@@ -690,7 +737,7 @@ export class KomgaCatalogRepository {
       if (readStatuses) oneshotClauses.push(this.readStatusClause(readStatuses, read, inProgress));
       branches.push(sql`SELECT ${books.libraryId} AS library_id, NULL::integer AS series_id, ${books.id} AS book_id, ${this.bookTitleSql()} AS name,
         1 AS books_count, (CASE WHEN ${read} THEN 1 ELSE 0 END) AS books_read_count, (CASE WHEN ${inProgress} THEN 1 ELSE 0 END) AS books_in_progress_count,
-        ${books.addedAt} AS created_at, ${books.updatedAt} AS updated_at, NULL::integer AS expected_book_count
+        ${lastReadAt} AS last_read_at, ${books.addedAt} AS created_at, ${books.updatedAt} AS updated_at, NULL::integer AS expected_book_count
         FROM ${books}
         LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
         WHERE ${and(...oneshotClauses)}`);
@@ -698,6 +745,10 @@ export class KomgaCatalogRepository {
 
     if (branches.length === 0) return null;
     return joinSql(branches, sql` UNION ALL `);
+  }
+
+  private lastReadAtSql(userId: number): SQL {
+    return sql`(SELECT max(coalesce(${userBookStatus.finishedAt}, ${userBookStatus.updatedAt})) FROM ${userBookStatus} WHERE ${userBookStatus.bookId} = ${books.id} AND ${userBookStatus.userId} = ${userId} AND ${userBookStatus.status} = 'read')`;
   }
 
   private readStateClauses(userId: number): { read: SQL; inProgress: SQL } {

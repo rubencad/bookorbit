@@ -26,7 +26,7 @@ import type {
 import { formatSeriesId, type KomgaSeriesKey } from './komga-ids';
 import { KomgaLibraryService } from './komga-library.service';
 import { buildKomgaPage, resolvePageRequest, type KomgaPage, type KomgaRecordPage } from './komga-page-response';
-import type { BookListQuery, PageImageQuery } from './komga-query';
+import type { BookListQuery, BookRecentQuery, PageImageQuery } from './komga-query';
 import { isKomgaVisibleNonComicFormat, toKomgaBookDto } from './komga.mapper';
 import { KOMGA_UNKNOWN_SERIES_TITLE } from './komga.constants';
 
@@ -100,6 +100,22 @@ export class KomgaBookService {
     return { records, page, total };
   }
 
+  listLatest(user: RequestUser, account: KomgaRequestAccount, query: BookRecentQuery): Promise<KomgaPage<KomgaBookDto>> {
+    return this.list(user, account, { page: query.page, size: query.size, library_id: query.library_id, sort: ['createdDate,desc'] });
+  }
+
+  async listOnDeck(user: RequestUser, account: KomgaRequestAccount, query: BookRecentQuery): Promise<KomgaPage<KomgaBookDto>> {
+    const page = resolvePageRequest({ page: query.page, size: query.size }, { defaultSort: [], sortableProperties: [] });
+    const scope = await this.libraryService.resolveScope(user, account, query.library_id);
+    const { entries, total } = await this.repository.listOnDeck(scope, page);
+    const records = await this.buildRecords(
+      scope,
+      entries.map((entry) => entry.bookId),
+      new Map(entries.map((entry) => [entry.bookId, entry.key])),
+    );
+    return buildKomgaPage(records.map(toKomgaBookDto), page, total);
+  }
+
   async get(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookDto> {
     return toKomgaBookDto(await this.getRecord(user, account, bookId));
   }
@@ -152,7 +168,7 @@ export class KomgaBookService {
     return { file, filename };
   }
 
-  async buildRecords(scope: KomgaScope, bookIds: number[], context?: KomgaSeriesKey): Promise<KomgaBookRecord[]> {
+  async buildRecords(scope: KomgaScope, bookIds: number[], context?: KomgaSeriesKey | Map<number, KomgaSeriesKey>): Promise<KomgaBookRecord[]> {
     if (bookIds.length === 0) return [];
     const hydration = await this.repository.hydrateBooks(bookIds, scope.userId);
     const rowsById = new Map(hydration.books.map((row) => [row.id, row]));
@@ -164,9 +180,10 @@ export class KomgaBookService {
       const file = pickKomgaFile(hydration.files.get(bookId) ?? [], row.primaryFileId, row.formatPriority, scope.includeNonComicBooks);
       if (!file) continue;
       const memberships = hydration.memberships.get(bookId) ?? [];
+      const contextKey = context instanceof Map ? context.get(bookId) : context;
       const membership =
-        context?.kind === 'series'
-          ? memberships.find((entry) => entry.seriesId === context.seriesId)
+        contextKey?.kind === 'series'
+          ? memberships.find((entry) => entry.seriesId === contextKey.seriesId)
           : (memberships.find((entry) => entry.displayOrder === 0) ?? memberships[0]);
       const title = row.title ?? basename(row.folderPath);
       if (membership) {

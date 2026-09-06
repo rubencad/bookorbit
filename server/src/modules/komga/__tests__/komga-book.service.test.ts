@@ -75,6 +75,7 @@ function makeService(hydrated: KomgaBookHydration, numbering = new Map()) {
     resolveSeriesNumbering: vi.fn().mockResolvedValue(numbering),
     findVisibleBookId: vi.fn().mockResolvedValue(10),
     listBooks: vi.fn().mockResolvedValue({ bookIds: [10], total: 1 }),
+    listOnDeck: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
   };
   const libraryService = { resolveScope: vi.fn().mockResolvedValue(SCOPE) };
   const comicPageService = {
@@ -258,6 +259,38 @@ describe('KomgaBookService', () => {
       expect(page.totalElements).toBe(1);
       expect(page.content[0]).toMatchObject({ id: '10', name: 'Alpha' });
       expect(repository.listBooks).toHaveBeenCalledWith(SCOPE, expect.objectContaining({ search: 'alpha' }), expect.objectContaining({ size: 10 }));
+    });
+
+    it('lists the latest books by creation date regardless of the requested sort', async () => {
+      const { service, repository } = makeService(hydration({ books: [row()], files: new Map([[10, [file()]]]) }));
+      await service.listLatest(USER, ACCOUNT, { library_id: [2], size: 3 });
+      expect(repository.listBooks).toHaveBeenCalledWith(
+        SCOPE,
+        expect.anything(),
+        expect.objectContaining({ size: 3, sort: [{ property: 'createdDate', direction: 'desc' }] }),
+      );
+    });
+
+    it('describes on deck books in the context of the series they continue', async () => {
+      const memberships = [
+        { bookId: 10, seriesId: 8, seriesName: 'Primary', seriesIndex: '1', displayOrder: 0 },
+        { bookId: 10, seriesId: 9, seriesName: 'Crossover', seriesIndex: '4', displayOrder: 1 },
+      ];
+      const { service, repository } = makeService(
+        hydration({ books: [row()], files: new Map([[10, [file()]]]), memberships: new Map([[10, memberships]]) }),
+      );
+      repository.listOnDeck.mockResolvedValue({ entries: [{ key: { kind: 'series', libraryId: 2, seriesId: 9 }, bookId: 10 }], total: 7 });
+
+      const page = await service.listOnDeck(USER, ACCOUNT, { page: 1, size: 1 });
+
+      expect(repository.listOnDeck).toHaveBeenCalledWith(SCOPE, expect.objectContaining({ page: 1, size: 1, offset: 1 }));
+      expect(page.totalElements).toBe(7);
+      expect(page.content[0]).toMatchObject({
+        id: '10',
+        seriesId: '2-s9',
+        seriesTitle: 'Crossover',
+        metadata: expect.objectContaining({ numberSort: 4 }),
+      });
     });
 
     it('resolves the download file and its filename', async () => {

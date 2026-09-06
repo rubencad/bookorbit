@@ -102,6 +102,32 @@ describe('KomgaSeriesService', () => {
     expect(page.content[0]).toMatchObject({ id: '2-s9', name: 'Saga', booksCount: 2 });
   });
 
+  it('orders the recency lists by creation or modification and limits updated to changed series', async () => {
+    const { service, repository, libraryService } = makeService();
+
+    await service.listRecent(USER, ACCOUNT, 'new', { library_id: [2], oneshot: false, size: 5 });
+    expect(libraryService.resolveScope).toHaveBeenLastCalledWith(USER, ACCOUNT, [2]);
+    expect(repository.listSeries).toHaveBeenLastCalledWith(
+      SCOPE,
+      expect.objectContaining({ oneshot: false, updatedOnly: false }),
+      expect.objectContaining({ size: 5, sort: [{ property: 'createdDate', direction: 'desc' }] }),
+    );
+
+    await service.listRecent(USER, ACCOUNT, 'updated', {});
+    expect(repository.listSeries).toHaveBeenLastCalledWith(
+      SCOPE,
+      expect.objectContaining({ updatedOnly: true }),
+      expect.objectContaining({ sort: [{ property: 'lastModifiedDate', direction: 'desc' }] }),
+    );
+
+    await service.listRecent(USER, ACCOUNT, 'latest', {});
+    expect(repository.listSeries).toHaveBeenLastCalledWith(
+      SCOPE,
+      expect.objectContaining({ updatedOnly: false }),
+      expect.objectContaining({ sort: [{ property: 'lastModifiedDate', direction: 'desc' }] }),
+    );
+  });
+
   it('returns an empty page for deleted=true without querying', async () => {
     const { service, repository } = makeService();
     await expect(service.list(USER, ACCOUNT, { deleted: true })).resolves.toMatchObject({ content: [], totalElements: 0 });
