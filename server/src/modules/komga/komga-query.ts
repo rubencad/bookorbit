@@ -91,6 +91,18 @@ export const pageImageQuerySchema = z.object({
 });
 export type PageImageQuery = z.infer<typeof pageImageQuerySchema>;
 
+export const opdsFeedQuerySchema = z.object({
+  page: pageNumber,
+  size: pageSize,
+  search: singleString,
+});
+export type OpdsFeedQuery = z.infer<typeof opdsFeedQuerySchema>;
+
+export const opdsPageImageQuerySchema = z.object({
+  convert: z.preprocess(toSingle, z.enum(['jpeg', 'png']).optional()),
+});
+export type OpdsPageImageQuery = z.infer<typeof opdsPageImageQuerySchema>;
+
 export const referentialQuerySchema = z.object({
   library_id: idList,
   search: singleString,

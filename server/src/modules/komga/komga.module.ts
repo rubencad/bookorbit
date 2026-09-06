@@ -15,6 +15,8 @@ import { KomgaLibraryController } from './komga-library.controller';
 import { KomgaLibraryService } from './komga-library.service';
 import { KomgaListController } from './komga-list.controller';
 import { KomgaMeController } from './komga-me.controller';
+import { KomgaOpdsController } from './komga-opds.controller';
+import { KomgaOpdsService } from './komga-opds.service';
 import { KomgaReferentialController } from './komga-referential.controller';
 import { KomgaReferentialService } from './komga-referential.service';
 import { KomgaSeriesController } from './komga-series.controller';
@@ -36,6 +38,7 @@ import { KomgaUserService } from './komga-user.service';
     KomgaBookController,
     KomgaReferentialController,
     KomgaListController,
+    KomgaOpdsController,
     KomgaFallbackController,
   ],
   providers: [
@@ -49,6 +52,7 @@ import { KomgaUserService } from './komga-user.service';
     KomgaSeriesService,
     KomgaReferentialService,
     KomgaThumbnailService,
+    KomgaOpdsService,
   ],
 })
 export class KomgaModule {}

@@ -1,20 +1,17 @@
 import { BadRequestException, Get, Headers, Param, Query, Res } from '@nestjs/common';
-import { createReadStream } from 'fs';
-import { stat } from 'fs/promises';
 import type { FastifyReply } from 'fastify';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { RequestUser } from '../../common/types/request-user';
-import { contentDispositionHeader } from '../../common/utils/content-disposition.utils';
-import { contentRangeHeader, resolveByteRange, unsatisfiableContentRangeHeader } from '../../common/utils/http-range.utils';
 import { KomgaAccount } from './komga-account.decorator';
 import type { KomgaRequestAccount } from './komga-auth.guard';
 import { KomgaBookService } from './komga-book.service';
+import { sendKomgaBookFile, sendKomgaPageImage } from './komga-file-response';
 import { parseNumericId } from './komga-ids';
 import { KomgaController } from './komga-public.controller';
 import { bookListQuerySchema, pageImageQuerySchema, parseKomgaQuery, type KomgaRawQuery } from './komga-query';
 import { KomgaThumbnailService } from './komga-thumbnail.service';
-import { komgaMediaType, toKomgaPageDto } from './komga.mapper';
+import { toKomgaPageDto } from './komga.mapper';
 
 @KomgaController('komga/api/v1/books')
 export class KomgaBookController {
@@ -57,15 +54,7 @@ export class KomgaBookController {
       Number(pageNumberParam),
       parseKomgaQuery(pageImageQuerySchema, query),
     );
-    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
-    if (ifNoneMatch === image.etag) {
-      reply.status(304).send();
-      return;
-    }
-    reply.header('Cache-Control', 'private, max-age=86400');
-    reply.header('ETag', image.etag);
-    reply.type(image.stream.mimeType);
-    reply.send(image.stream.stream);
+    sendKomgaPageImage(image, reply, ifNoneMatch);
   }
 
   @Get(':bookId/thumbnail')
@@ -88,28 +77,8 @@ export class KomgaBookController {
     @Res() reply: FastifyReply,
     @Headers('range') rangeHeader?: string,
   ) {
-    const { file, filename } = await this.bookService.resolveDownload(user, account, this.parseBookId(bookIdParam));
-    const { size } = await stat(file.absolutePath);
-
-    reply.header('Accept-Ranges', 'bytes');
-    reply.header('Content-Disposition', contentDispositionHeader('attachment', filename, 'download'));
-    reply.type(komgaMediaType(file.format));
-
-    const resolution = resolveByteRange(rangeHeader, size);
-    if (resolution.kind === 'unsatisfiable') {
-      reply.header('Content-Range', unsatisfiableContentRangeHeader(size));
-      reply.status(416).send();
-      return;
-    }
-    if (resolution.kind === 'partial') {
-      const { start, end } = resolution.range;
-      reply.header('Content-Range', contentRangeHeader(resolution.range, size));
-      reply.header('Content-Length', end - start + 1);
-      reply.status(206).send(createReadStream(file.absolutePath, { start, end }));
-      return;
-    }
-    reply.header('Content-Length', size);
-    reply.send(createReadStream(file.absolutePath));
+    const download = await this.bookService.resolveDownload(user, account, this.parseBookId(bookIdParam));
+    await sendKomgaBookFile(download, reply, rangeHeader);
   }
 
   private parseBookId(value: string): number {

@@ -2808,7 +2808,7 @@
         "apiServerHint": "Allow Komga clients to browse your libraries and stream comic pages",
         "disabledByAdmin": "The Komga API is turned off. Ask an administrator to enable it in Settings.",
         "endpoint": "Server address",
-        "endpointHint": "Enter this address as the server URL in your Komga client, then sign in with a Komga account below.",
+        "endpointHint": "Enter this address as the server URL in your Komga client, then sign in with a Komga account below. If a client asks for a URL ending in OPDS, add /opds to the end.",
         "copy": "Copy",
         "accounts": "Komga Accounts",
         "add": "Add",

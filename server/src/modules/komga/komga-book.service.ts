@@ -11,7 +11,7 @@ import { KOMGA_BOOK_SORT_PROPERTIES, KomgaCatalogRepository, type KomgaBookRow, 
 import type { KomgaAuthorRef, KomgaBookFileRecord, KomgaBookRecord, KomgaBookSeriesContext, KomgaScope } from './komga-catalog.types';
 import { formatSeriesId, type KomgaSeriesKey } from './komga-ids';
 import { KomgaLibraryService } from './komga-library.service';
-import { buildKomgaPage, resolvePageRequest, type KomgaPage } from './komga-page-response';
+import { buildKomgaPage, resolvePageRequest, type KomgaPage, type KomgaRecordPage } from './komga-page-response';
 import type { BookListQuery, PageImageQuery } from './komga-query';
 import { isKomgaVisibleNonComicFormat, toKomgaBookDto } from './komga.mapper';
 import { KOMGA_UNKNOWN_SERIES_TITLE } from './komga.constants';
@@ -65,11 +65,16 @@ export class KomgaBookService {
   ) {}
 
   async list(user: RequestUser, account: KomgaRequestAccount, query: BookListQuery): Promise<KomgaPage<KomgaBookDto>> {
+    const { records, page, total } = await this.listRecords(user, account, query);
+    return buildKomgaPage(records.map(toKomgaBookDto), page, total);
+  }
+
+  async listRecords(user: RequestUser, account: KomgaRequestAccount, query: BookListQuery): Promise<KomgaRecordPage<KomgaBookRecord>> {
     const page = resolvePageRequest(query, {
       defaultSort: [{ property: 'metadata.titleSort', direction: 'asc' }],
       sortableProperties: KOMGA_BOOK_SORT_PROPERTIES,
     });
-    if (query.deleted === true) return buildKomgaPage<KomgaBookDto>([], page, 0);
+    if (query.deleted === true) return { records: [], page, total: 0 };
 
     const scope = await this.libraryService.resolveScope(user, account, query.library_id);
     const { bookIds, total } = await this.repository.listBooks(
@@ -78,7 +83,7 @@ export class KomgaBookService {
       page,
     );
     const records = await this.buildRecords(scope, bookIds);
-    return buildKomgaPage(records.map(toKomgaBookDto), page, total);
+    return { records, page, total };
   }
 
   async get(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookDto> {

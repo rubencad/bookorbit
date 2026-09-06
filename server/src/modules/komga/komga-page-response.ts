@@ -52,6 +52,12 @@ export interface KomgaPage<T> {
   empty: boolean;
 }
 
+export interface KomgaRecordPage<T> {
+  records: T[];
+  page: KomgaPageRequest;
+  total: number;
+}
+
 export interface ResolvePageRequestOptions {
   defaultSort: KomgaSort[];
   sortableProperties: readonly string[];
