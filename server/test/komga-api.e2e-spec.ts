@@ -167,6 +167,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     hiddenComic = await locateBookByAbsolutePath(ctx, hiddenComicPath);
 
     await seedTitle(alphaOne.bookId, 'Alpha One', 'The first issue.');
+    await seedPublishedDate(alphaOne.bookId, '2012-03-14');
     await seedTitle(alphaTwo.bookId, 'Alpha Two');
     await seedTitle(crossover.bookId, 'Crossover');
     await seedTitle(alphaLoose.bookId, 'Alpha Loose');
@@ -1178,7 +1179,15 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect(seriesNames(await searchSeries(grouped, { condition: { language: { operator: 'isNot', value: 'fr' } } }))).toHaveLength(3);
       expect(seriesNames(await searchSeries(grouped, { condition: { complete: { operator: 'isTrue' } } }))).toEqual([]);
       expect(seriesNames(await searchSeries(grouped, { condition: { seriesStatus: { operator: 'is', value: 'ONGOING' } } }))).toHaveLength(3);
-      expect(seriesNames(await searchSeries(grouped, { condition: { releaseDate: { operator: 'isNull' } } }))).toHaveLength(3);
+      expect(seriesNames(await searchSeries(grouped, { condition: { releaseDate: { operator: 'isNull' } } }))).toEqual([
+        seriesBName,
+        'Unknown Series',
+      ]);
+      expect(seriesNames(await searchSeries(grouped, { condition: { releaseDate: { operator: 'isNotNull' } } }))).toEqual([seriesAName]);
+      expect(
+        seriesNames(await searchSeries(grouped, { condition: { releaseDate: { operator: 'before', dateTime: '2013-01-01T00:00:00Z' } } })),
+      ).toEqual([seriesAName]);
+      expect(seriesNames(await searchSeries(grouped, { condition: { releaseDate: { operator: 'after', dateTime: '2013-01-01' } } }))).toEqual([]);
       expect(seriesNames(await searchSeries(grouped, { condition: { readStatus: { operator: 'is', value: 'UNREAD' } } }))).toHaveLength(3);
       expect(seriesNames(await searchSeries(grouped, { condition: { deleted: { operator: 'isTrue' } } }))).toEqual([]);
       expect(
@@ -1243,10 +1252,19 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
         'Alpha One',
       ]);
       expect(bookNames(await searchBooks(grouped, { condition: { author: { operator: 'isNot', value: { name: writerName } } } }))).toHaveLength(4);
-      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'isNull' } } }))).toHaveLength(5);
-      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'after', dateTime: '2000-01-01T00:00:00Z' } } }))).toEqual(
-        [],
-      );
+      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'isNull' } } }))).toEqual([
+        'Alpha Loose',
+        'Alpha Two',
+        'Crossover',
+        'Standalone',
+      ]);
+      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'after', dateTime: '2000-01-01T00:00:00Z' } } }))).toEqual([
+        'Alpha One',
+      ]);
+      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'isInTheLast', duration: 'P30D' } } }))).toEqual([]);
+      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'isNotInTheLast', duration: 'P30D' } } }))).toEqual([
+        'Alpha One',
+      ]);
 
       expect(bookNames(await searchBooks(flat, { condition: { mediaProfile: { operator: 'is', value: 'PDF' } } }))).toEqual(['Manual']);
       expect(bookNames(await searchBooks(flat, { condition: { mediaProfile: { operator: 'is', value: 'EPUB' } } }))).toEqual(['Novel']);
@@ -1410,6 +1428,10 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
   async function seedTitle(bookId: number, title: string, description?: string): Promise<void> {
     const values = { bookId, title, ...(description ? { description } : {}) };
     await ctx.db.insert(schema.bookMetadata).values(values).onConflictDoUpdate({ target: schema.bookMetadata.bookId, set: values });
+  }
+
+  async function seedPublishedDate(bookId: number, publishedDate: string): Promise<void> {
+    await ctx.db.update(schema.bookMetadata).set({ publishedDate }).where(eq(schema.bookMetadata.bookId, bookId));
   }
 
   async function seedSeries(name: string): Promise<number> {

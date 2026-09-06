@@ -3,9 +3,8 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from '../../../db/schema';
 import { KomgaCatalogRepository } from '../komga-catalog.repository';
 import type { KomgaScope } from '../komga-catalog.types';
+import { parseKomgaSeriesSearch } from '../komga-search-condition';
 
-// A real drizzle instance over a stub client compiles the exact SQL production sends; the mocked
-// repository suite can only assert on result mapping.
 function makeRepository() {
   const queries: string[] = [];
   const client = {
@@ -38,5 +37,32 @@ describe('KomgaCatalogRepository SQL', () => {
     expect(orderBy).toContain('coalesce((SELECT max("reading_progress"."last_read_at")');
     expect(orderBy).toContain('(SELECT max(coalesce("user_book_status"."finished_at", "user_book_status"."updated_at"))');
     expect(orderBy).toContain(`"user_book_status"."status" = 'read')) DESC NULLS LAST`);
+  });
+
+  it('selects named-series candidates by seriesId', async () => {
+    const { repository, queries } = makeRepository();
+    const { condition } = parseKomgaSeriesSearch({ condition: { tag: { operator: 'is', value: 'space' } } });
+    await repository.listSeries(SCOPE, { condition }, PAGE);
+
+    const [listing, count] = queries;
+    for (const text of [listing, count]) {
+      const outer = text.slice(text.lastIndexOf(') AS series WHERE'));
+      expect(outer).toContain('"book_series_memberships"."series_id" = series.series_id');
+      expect(outer).toContain('UNION ALL SELECT series.book_id WHERE series.book_id IS NOT NULL');
+      expect(outer).toContain('"candidate"."library_id" = series.library_id');
+      expect(outer).not.toContain('CASE');
+    }
+  });
+
+  it('reads series release dates from the grouped source rather than a correlated aggregate', async () => {
+    const { repository, queries } = makeRepository();
+    const { condition } = parseKomgaSeriesSearch({ condition: { releaseDate: { operator: 'before', dateTime: '2020-01-01T00:00:00Z' } } });
+    await repository.listSeries({ ...SCOPE, groupUnknownSeries: false }, { condition }, PAGE);
+
+    const [listing] = queries;
+    expect(listing).toContain('min("book_metadata"."published_date") AS release_date');
+    expect(listing).toContain('"book_metadata"."published_date" AS release_date');
+    expect(listing.slice(listing.lastIndexOf(') AS series WHERE'))).toContain('series.release_date < $');
+    expect(listing.match(/min\("book_metadata"\."published_date"\)/g)).toHaveLength(1);
   });
 });

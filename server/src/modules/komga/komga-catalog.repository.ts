@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SQL, and, eq, exists, inArray, notExists, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { alias } from 'drizzle-orm/pg-core';
 
 import { EBOOK_FORMAT_LIST, type ReadStatus, type ReadStatusSource } from '@bookorbit/types';
 import { COMIC_CONTAINER_FORMATS } from '../../common/comic-format-detect';
@@ -180,6 +181,7 @@ type SeriesSourceRow = {
   created_at: Date;
   updated_at: Date;
   expected_book_count: number | null;
+  release_date: string | null;
 };
 
 const NON_COMIC_VISIBLE_FORMATS: readonly string[] = EBOOK_FORMAT_LIST;
@@ -754,10 +756,12 @@ export class KomgaCatalogRepository {
       }
       if (groupedReadStatus) having.push(sql`(${groupedReadStatus})`);
       branches.push(sql`SELECT ${books.libraryId} AS library_id, ${bookSeriesMemberships.seriesId} AS series_id, NULL::integer AS book_id, ${bookSeries.name} AS name,
-        count(*)::integer AS books_count, ${groupedCounts}, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, ${bookSeries.expectedBookCount} AS expected_book_count
+        count(*)::integer AS books_count, ${groupedCounts}, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, ${bookSeries.expectedBookCount} AS expected_book_count,
+        min(${bookMetadata.publishedDate}) AS release_date
         FROM ${books}
         INNER JOIN ${bookSeriesMemberships} ON ${bookSeriesMemberships.bookId} = ${books.id}
         INNER JOIN ${bookSeries} ON ${bookSeries.id} = ${bookSeriesMemberships.seriesId}
+        LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
         WHERE ${and(...namedClauses)}
         GROUP BY ${books.libraryId}, ${bookSeriesMemberships.seriesId}, ${bookSeries.name}, ${bookSeries.expectedBookCount}
         ${having.length > 0 ? sql`HAVING ${joinSql(having, sql` AND `)}` : sql``}`);
@@ -769,8 +773,10 @@ export class KomgaCatalogRepository {
       const having = bookPredicates.map((predicate) => sql`bool_or(${predicate})`);
       if (groupedReadStatus) having.push(sql`(${groupedReadStatus})`);
       branches.push(sql`SELECT ${books.libraryId} AS library_id, NULL::integer AS series_id, NULL::integer AS book_id, ${KOMGA_UNKNOWN_SERIES_TITLE}::varchar AS name,
-        count(*)::integer AS books_count, ${groupedCounts}, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, NULL::integer AS expected_book_count
+        count(*)::integer AS books_count, ${groupedCounts}, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, NULL::integer AS expected_book_count,
+        min(${bookMetadata.publishedDate}) AS release_date
         FROM ${books}
+        LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
         WHERE ${and(...base, unmembered)}
         GROUP BY ${books.libraryId}
         ${having.length > 0 ? sql`HAVING ${joinSql(having, sql` AND `)}` : sql``}`);
@@ -784,7 +790,8 @@ export class KomgaCatalogRepository {
       if (readStatuses) oneshotClauses.push(this.readStatusClause(readStatuses, read, inProgress));
       branches.push(sql`SELECT ${books.libraryId} AS library_id, NULL::integer AS series_id, ${books.id} AS book_id, ${this.bookTitleSql()} AS name,
         1 AS books_count, (CASE WHEN ${read} THEN 1 ELSE 0 END) AS books_read_count, (CASE WHEN ${inProgress} THEN 1 ELSE 0 END) AS books_in_progress_count,
-        ${lastReadAt} AS last_read_at, ${books.addedAt} AS created_at, ${books.updatedAt} AS updated_at, NULL::integer AS expected_book_count
+        ${lastReadAt} AS last_read_at, ${books.addedAt} AS created_at, ${books.updatedAt} AS updated_at, NULL::integer AS expected_book_count,
+        ${bookMetadata.publishedDate} AS release_date
         FROM ${books}
         LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
         WHERE ${and(...oneshotClauses)}`);
@@ -918,28 +925,28 @@ export class KomgaCatalogRepository {
     };
   }
 
-  // The `books` table inside the correlated subquery shadows nothing: the outer query only sees the
-  // aliased series rows, so the shared predicates bind to the member being tested.
+  // Select candidates by series ID or book ID to avoid checking membership across the library for each series.
   private seriesPredicates(scope: KomgaScope): KomgaSeriesPredicates {
-    const memberOfRow = sql`${books.libraryId} = series.library_id AND CASE
-      WHEN series.series_id IS NOT NULL THEN ${this.memberOf(sql`series.series_id`)}
-      WHEN series.book_id IS NOT NULL THEN ${books.id} = series.book_id
-      ELSE ${this.unmemberedClause()} END`;
-    const members = (predicate: SQL) =>
-      sql`FROM ${books} LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id} WHERE ${and(...this.baseClauses(scope))} AND ${memberOfRow} AND ${predicate}`;
+    const candidate = alias(books, 'candidate');
+    const memberIds = sql`SELECT ${bookSeriesMemberships.bookId} FROM ${bookSeriesMemberships} WHERE ${bookSeriesMemberships.seriesId} = series.series_id
+      UNION ALL SELECT series.book_id WHERE series.book_id IS NOT NULL
+      UNION ALL SELECT ${candidate.id} FROM ${books} AS ${candidate}
+        WHERE series.series_id IS NULL AND series.book_id IS NULL AND ${candidate.libraryId} = series.library_id
+        AND NOT EXISTS (SELECT 1 FROM ${bookSeriesMemberships} WHERE ${bookSeriesMemberships.bookId} = ${candidate.id})`;
     return {
       book: this.bookPredicates(scope),
-      memberExists: (predicate) => sql`EXISTS (SELECT 1 ${members(predicate)})`,
-      releaseDate: () => sql`(SELECT min(${bookMetadata.publishedDate}) ${members(sql`true`)})`,
+      memberExists: (predicate) =>
+        sql`EXISTS (SELECT 1 FROM ${books} WHERE ${books.id} IN (${memberIds}) AND ${and(...this.baseClauses(scope))} AND ${predicate})`,
+      releaseDate: () => sql`series.release_date`,
     };
   }
 
-  private memberOf(seriesId: number | SQL): SQL {
+  private memberOf(seriesId: number): SQL {
     return exists(
       this.db
         .select({ one: sql`1` })
         .from(bookSeriesMemberships)
-        .where(and(sql`${bookSeriesMemberships.bookId} = ${books.id}`, sql`${bookSeriesMemberships.seriesId} = ${seriesId}`)),
+        .where(and(sql`${bookSeriesMemberships.bookId} = ${books.id}`, eq(bookSeriesMemberships.seriesId, seriesId))),
     );
   }
 
