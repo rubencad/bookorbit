@@ -29,6 +29,11 @@ export interface SeriesListOptions {
 
 export type KomgaSeriesRecordPage = KomgaRecordPage<KomgaSeriesRecord> & { aggregates: Map<string, KomgaSeriesAggregate> };
 
+export interface KomgaSeriesHandle {
+  scope: KomgaScope;
+  series: KomgaSeriesRecord;
+}
+
 @Injectable()
 export class KomgaSeriesService {
   private readonly logger = new Logger(KomgaSeriesService.name);
@@ -162,15 +167,16 @@ export class KomgaSeriesService {
 
   // Walks every member in numberSort order without the offset ceiling of the public listing, so bulk
   // work reaches the whole of a library-sized unknown bucket. Returning false from visit stops early.
+  async resolveSeries(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<KomgaSeriesHandle> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    return { scope, series: await this.requireSeries(scope, seriesId) };
+  }
+
   async forEachBookBatch(
-    user: RequestUser,
-    account: KomgaRequestAccount,
-    seriesId: string,
+    { scope, series }: KomgaSeriesHandle,
     batchSize: number,
     visit: (records: KomgaBookRecord[], offset: number, total: number) => Promise<boolean | void> | boolean | void,
-  ): Promise<{ series: KomgaSeriesRecord; total: number }> {
-    const scope = await this.libraryService.resolveScope(user, account);
-    const series = await this.requireSeries(scope, seriesId);
+  ): Promise<number> {
     const sort: KomgaSort[] = [{ property: 'metadata.numberSort', direction: 'asc' }];
     let offset = 0;
     let total: number;
@@ -184,7 +190,7 @@ export class KomgaSeriesService {
       offset += batch.bookIds.length;
       if ((await visit(records, batchOffset, total)) === false) break;
     } while (offset < total);
-    return { series, total };
+    return total;
   }
 
   async thumbnailBookId(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<number> {

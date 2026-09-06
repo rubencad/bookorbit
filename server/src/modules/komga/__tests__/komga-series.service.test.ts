@@ -113,10 +113,10 @@ describe('KomgaSeriesService', () => {
     bookService.buildRecords.mockImplementation((_scope: unknown, ids: number[]) => Promise.resolve(ids.map(bookRecord)));
     const visit = vi.fn().mockResolvedValue(undefined);
 
-    const { series, total } = await service.forEachBookBatch(USER, ACCOUNT, '2-s9', 2, visit);
+    const handle = await service.resolveSeries(USER, ACCOUNT, '2-s9');
+    expect(handle).toEqual({ scope: SCOPE, series: SERIES });
+    await expect(service.forEachBookBatch(handle, 2, visit)).resolves.toBe(3);
 
-    expect(series).toBe(SERIES);
-    expect(total).toBe(3);
     expect(repository.listSeriesBooks).toHaveBeenNthCalledWith(1, SCOPE, SERIES.key, {}, expect.objectContaining({ page: 0, size: 2, offset: 0 }));
     expect(repository.listSeriesBooks).toHaveBeenNthCalledWith(2, SCOPE, SERIES.key, {}, expect.objectContaining({ page: 1, size: 2, offset: 2 }));
     expect(visit.mock.calls.map(([records, offset, count]) => [records.map((record: { id: number }) => record.id), offset, count])).toEqual([
@@ -125,9 +125,12 @@ describe('KomgaSeriesService', () => {
     ]);
 
     const stopping = vi.fn().mockResolvedValue(false);
-    await service.forEachBookBatch(USER, ACCOUNT, '2-s9', 2, stopping);
+    await service.forEachBookBatch(handle, 2, stopping);
     expect(stopping).toHaveBeenCalledTimes(1);
     expect(repository.listSeriesBooks).toHaveBeenCalledTimes(3);
+
+    repository.findSeries.mockResolvedValueOnce(null);
+    await expect(service.resolveSeries(USER, ACCOUNT, '2-s9')).rejects.toThrow(NotFoundException);
   });
 
   it('orders the recency lists by creation or modification and limits updated to changed series', async () => {

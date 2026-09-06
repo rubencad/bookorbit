@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 import { isComicContainerFormat } from '../../common/comic-format-detect';
 import type { RequestUser } from '../../common/types/request-user';
@@ -165,20 +165,22 @@ export class KomgaReadProgressService {
   }
 
   private async summarizeSeries(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<KomgaSeriesProgressSummary> {
+    const handle = await this.seriesService.resolveSeries(user, account, seriesId);
     const accumulator = new SeriesProgressAccumulator();
-    await this.seriesService.forEachBookBatch(user, account, seriesId, SERIES_BATCH_SIZE, (records) => {
+    await this.seriesService.forEachBookBatch(handle, SERIES_BATCH_SIZE, (records) => {
       for (const record of records) accumulator.add(record);
     });
     return accumulator.summary();
   }
 
   private async writeSeries(user: RequestUser, account: KomgaRequestAccount, seriesId: string, plan: SeriesWritePlan): Promise<void> {
+    const handle = await this.seriesService.resolveSeries(user, account, seriesId);
     const startedAt = Date.now();
     let visited = 0;
     let attempted = 0;
     this.logger.log(`[${SERIES_EVENT}] [start] seriesId=${seriesId} userId=${user.id} action=${plan.action} - series read progress update started`);
     try {
-      await this.seriesService.forEachBookBatch(user, account, seriesId, SERIES_BATCH_SIZE, async (records, offset, total) => {
+      await this.seriesService.forEachBookBatch(handle, SERIES_BATCH_SIZE, async (records, offset, total) => {
         const targets = records.filter((record, index) => plan.shouldWrite(record, offset + index));
         attempted += targets.length;
         await forEachWithConcurrency(targets, SERIES_WRITE_CONCURRENCY, plan.write);
@@ -191,12 +193,10 @@ export class KomgaReadProgressService {
         return plan.finishedAfter?.(records, offset + records.length) ? false : undefined;
       });
     } catch (error) {
-      if (!(error instanceof NotFoundException)) {
-        const err = error instanceof Error ? error : new Error(String(error));
-        this.logger.warn(
-          `[${SERIES_EVENT}] [fail] seriesId=${seriesId} userId=${user.id} action=${plan.action} durationMs=${Date.now() - startedAt} visited=${visited} attempted=${attempted} errorClass=${err.constructor.name} error="${sanitizeLogValue(err.message)}" - series read progress update failed`,
-        );
-      }
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.warn(
+        `[${SERIES_EVENT}] [fail] seriesId=${seriesId} userId=${user.id} action=${plan.action} durationMs=${Date.now() - startedAt} visited=${visited} attempted=${attempted} errorClass=${err.constructor.name} error="${sanitizeLogValue(err.message)}" - series read progress update failed`,
+      );
       throw error;
     }
     this.logger.log(

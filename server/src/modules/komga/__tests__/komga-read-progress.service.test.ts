@@ -71,24 +71,25 @@ function makeService(records: KomgaBookRecord[] = []) {
     }),
   };
   const batches: number[] = [];
+  const handle = { scope: { userId: USER.id }, series: { key: SERIES_KEY, name: 'Saga' } };
   const seriesService = {
+    resolveSeries: vi.fn().mockImplementation((_user: RequestUser, _account: KomgaRequestAccount, seriesId: string) => {
+      return seriesId === 'missing' ? Promise.reject(new NotFoundException('Series not found')) : Promise.resolve(handle);
+    }),
     forEachBookBatch: vi
       .fn()
       .mockImplementation(
         async (
-          _user: RequestUser,
-          _account: KomgaRequestAccount,
-          seriesId: string,
+          _handle: unknown,
           _batchSize: number,
           visit: (batch: KomgaBookRecord[], offset: number, total: number) => Promise<boolean | void> | boolean | void,
         ) => {
-          if (seriesId === 'missing') throw new NotFoundException('Series not found');
           for (let offset = 0; offset < records.length; offset += MOCK_BATCH_SIZE) {
             batches.push(offset);
             const keepGoing = await visit(records.slice(offset, offset + MOCK_BATCH_SIZE), offset, records.length);
             if (keepGoing === false) break;
           }
-          return { series: null, total: records.length };
+          return records.length;
         },
       ),
   };
@@ -270,7 +271,12 @@ describe('KomgaReadProgressService', () => {
         booksInProgressCount: 1,
         lastReadContinuousIndex: 1,
       });
-      expect(seriesService.forEachBookBatch).toHaveBeenCalledWith(USER, ACCOUNT, '2-s9', 500, expect.any(Function));
+      expect(seriesService.resolveSeries).toHaveBeenCalledWith(USER, ACCOUNT, '2-s9');
+      expect(seriesService.forEachBookBatch).toHaveBeenCalledWith(
+        expect.objectContaining({ series: expect.objectContaining({ key: SERIES_KEY }) }),
+        500,
+        expect.any(Function),
+      );
       expect(batches).toEqual([0, 2, 0, 2]);
     });
 
@@ -313,14 +319,31 @@ describe('KomgaReadProgressService', () => {
       warn.mockRestore();
     });
 
-    it('passes an unknown series through as 404 without logging a failure', async () => {
-      const { service } = makeService([]);
+    it('does not log a series update for an unknown series', async () => {
+      const { service, seriesService } = makeService([]);
       const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
       await expect(service.markSeriesRead(USER, ACCOUNT, 'missing')).rejects.toThrow(NotFoundException);
       await expect(service.tachiyomiProgressV2(USER, ACCOUNT, 'missing')).rejects.toThrow(NotFoundException);
+      expect(seriesService.forEachBookBatch).not.toHaveBeenCalled();
       expect(warn).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalledWith(expect.stringContaining('[komga.series_read_progress] [start]'));
       warn.mockRestore();
+      log.mockRestore();
+    });
+
+    it('logs matching start and failure records when a series batch walk fails', async () => {
+      const { service, seriesService } = makeService([record(1, 1)]);
+      seriesService.forEachBookBatch.mockRejectedValueOnce(new Error('connection lost'));
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await expect(service.clearSeries(USER, ACCOUNT, '2-s9')).rejects.toThrow('connection lost');
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('[komga.series_read_progress] [start] seriesId=2-s9 userId=1 action=mark_unread'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[komga.series_read_progress] [fail] seriesId=2-s9 userId=1 action=mark_unread'));
+      warn.mockRestore();
+      log.mockRestore();
     });
   });
 });

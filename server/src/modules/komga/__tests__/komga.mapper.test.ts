@@ -201,7 +201,7 @@ describe('komga mapper', () => {
     expect(komgaReadProgressFor(beyondEnd)?.page).toBe(142);
   });
 
-  it('carries progress made in another file of the book over by percentage', () => {
+  it('carries progress between files by percentage', () => {
     const readAt = new Date('2026-03-01T10:00:00.000Z');
     const otherFile = book({
       readState: readState({ progressFileId: 78, pageNumber: 50, percentage: 50, lastReadAt: readAt, progressUpdatedAt: readAt }),
