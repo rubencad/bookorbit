@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Delete, Get, HttpCode, HttpStatus, Param, Patch, Put } from '@nestjs/common';
+import { BadRequestException, Body, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put } from '@nestjs/common';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { RequestUser } from '../../common/types/request-user';
@@ -30,7 +30,7 @@ export class KomgaReadProgressController {
     await this.readProgressService.clearBook(user, account, this.parseBookId(bookIdParam));
   }
 
-  @Patch('v1/series/:seriesId/read-progress')
+  @Post('v1/series/:seriesId/read-progress')
   @HttpCode(HttpStatus.NO_CONTENT)
   async markSeriesRead(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Param('seriesId') seriesId: string) {
     await this.readProgressService.markSeriesRead(user, account, seriesId);

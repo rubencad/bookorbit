@@ -531,7 +531,7 @@
     "file": "server/src/modules/komga/komga-read-progress.controller.ts",
     "className": "KomgaReadProgressController",
     "methodName": "markSeriesRead",
-    "httpMethod": "PATCH",
+    "httpMethod": "POST",
     "path": "/komga/api/v1/series/:seriesId/read-progress",
     "permissions": [],
     "libraryAccess": [],

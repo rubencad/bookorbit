@@ -1065,7 +1065,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     });
 
     it('marks and unmarks a whole series', async () => {
-      expect((await komgaSend('PATCH', `${seriesAPath()}/read-progress`, grouped)).statusCode).toBe(204);
+      expect((await komgaSend('POST', `${seriesAPath()}/read-progress`, grouped)).statusCode).toBe(204);
       expect((await komgaGet(trackerV2(), grouped)).json()).toMatchObject({
         booksReadCount: 4,
         booksInProgressCount: 0,
@@ -1099,7 +1099,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
         404,
       );
       expect((await komgaSend('PATCH', alphaOnePath, peerCredentials, { page: 1 })).statusCode).toBe(404);
-      expect((await komgaSend('PATCH', `/komga/api/v1/series/${comicLibrary.libraryId}-s999999/read-progress`, grouped)).statusCode).toBe(404);
+      expect((await komgaSend('POST', `/komga/api/v1/series/${comicLibrary.libraryId}-s999999/read-progress`, grouped)).statusCode).toBe(404);
       expect((await komgaGet(`/komga/api/v2/series/${hiddenLibrary.libraryId}-u/read-progress/tachiyomi`, grouped)).statusCode).toBe(404);
 
       const pdfPath = `/komga/api/v1/books/${manualPdf.bookId}/read-progress`;
@@ -1121,7 +1121,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     });
   }
 
-  async function komgaSend(method: 'PATCH' | 'PUT' | 'DELETE', url: string, credentials: Credentials, payload?: Record<string, unknown>) {
+  async function komgaSend(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, credentials: Credentials, payload?: Record<string, unknown>) {
     return ctx.app.inject({
       method,
       url,
