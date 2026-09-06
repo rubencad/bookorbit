@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { stat } from 'fs/promises';
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Permission } from '@bookorbit/types';
 import sharp from 'sharp';
 
@@ -66,8 +66,18 @@ interface BookBody {
   sizeBytes: number;
   media: { status: string; mediaType: string; pagesCount: number; mediaProfile: string; epubIsKepub: boolean };
   metadata: { title: string; number: string; numberSort: number; authors: { name: string; role: string }[]; tags: string[]; isbn: string };
-  readProgress: null;
+  readProgress: ReadProgressBody | null;
   oneshot: boolean;
+}
+
+interface ReadProgressBody {
+  page: number;
+  completed: boolean;
+  readDate: string;
+  created: string;
+  lastModified: string;
+  deviceId: string;
+  deviceName: string;
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
@@ -887,11 +897,236 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     });
   });
 
+  describe('read progress', () => {
+    const seriesAPath = () => `/komga/api/v1/series/${comicLibrary.libraryId}-s${seriesAId}`;
+    const trackerV2 = () => `/komga/api/v2/series/${comicLibrary.libraryId}-s${seriesAId}/read-progress/tachiyomi`;
+    const trackerV1 = () => `${seriesAPath()}/read-progress/tachiyomi`;
+
+    it('records a page from a Komga client and shows it to the web reader and the OPDS feed', async () => {
+      const written = await komgaSend('PATCH', `/komga/api/v1/books/${alphaOne.bookId}/read-progress`, grouped, { page: 1 });
+      expect(written.statusCode).toBe(204);
+
+      const book = (await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}`, grouped)).json() as BookBody;
+      expect(book.readProgress).toMatchObject({ page: 1, completed: false, deviceId: '', deviceName: 'BookOrbit' });
+      expect(book.readProgress?.readDate).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+
+      const webProgress = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/books/files/${alphaOne.bookFileId}/progress`,
+        headers: authHeader(owner.accessToken),
+      });
+      expect(webProgress.json()).toMatchObject({ pageNumber: 1, percentage: 50 });
+
+      const feed = await komgaGet(`/komga/opds/v1.2/series/${comicLibrary.libraryId}-s${seriesAId}`, grouped);
+      expect(feed.body).toContain('pse:lastRead="1"');
+      expect(feed.body).toMatch(/pse:lastReadDate="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/);
+
+      const series = (await komgaGet(seriesAPath(), grouped)).json() as SeriesBody & {
+        booksReadCount: number;
+        booksInProgressCount: number;
+        booksUnreadCount: number;
+      };
+      expect(series).toMatchObject({ booksCount: 4, booksReadCount: 0, booksInProgressCount: 1, booksUnreadCount: 3 });
+
+      const inProgress = (await komgaGet('/komga/api/v1/series?read_status=IN_PROGRESS', grouped)).json() as KomgaPageBody<SeriesBody>;
+      expect(inProgress.content.map((entry) => entry.id)).toEqual([`${comicLibrary.libraryId}-s${seriesAId}`]);
+      const read = (await komgaGet('/komga/api/v1/series?read_status=READ', grouped)).json() as KomgaPageBody<SeriesBody>;
+      expect(read.content).toEqual([]);
+      const unreadSeries = (await komgaGet('/komga/api/v1/series?read_status=UNREAD', grouped)).json() as KomgaPageBody<SeriesBody>;
+      expect(unreadSeries.content.map((entry) => entry.id)).not.toContain(`${comicLibrary.libraryId}-s${seriesAId}`);
+
+      const inProgressBooks = (await komgaGet(`${seriesAPath()}/books?read_status=IN_PROGRESS`, grouped)).json() as KomgaPageBody<BookBody>;
+      expect(inProgressBooks.content.map((entry) => entry.name)).toEqual(['Alpha One']);
+      const unreadBooks = (await komgaGet(`${seriesAPath()}/books?read_status=UNREAD`, grouped)).json() as KomgaPageBody<BookBody>;
+      expect(unreadBooks.content.map((entry) => entry.name)).toEqual(['Alpha Two', 'Crossover', 'Alpha Loose']);
+
+      const otherUser = (await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}`, filteredCredentials)).json() as BookBody;
+      expect(otherUser.readProgress).toBeNull();
+    });
+
+    it('marks the last page as completed and records a komga reading attempt', async () => {
+      expect((await komgaSend('PATCH', `/komga/api/v1/books/${alphaOne.bookId}/read-progress`, grouped, { page: 2 })).statusCode).toBe(204);
+
+      const book = (await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}`, grouped)).json() as BookBody;
+      expect(book.readProgress).toMatchObject({ page: 2, completed: true });
+
+      const [status] = await ctx.db
+        .select({ status: schema.userBookStatus.status })
+        .from(schema.userBookStatus)
+        .where(and(eq(schema.userBookStatus.userId, owner.userId), eq(schema.userBookStatus.bookId, alphaOne.bookId)));
+      expect(status?.status).toBe('read');
+
+      const attempts = await ctx.db
+        .select({ origin: schema.readingAttempts.origin, outcome: schema.readingAttempts.outcome })
+        .from(schema.readingAttempts)
+        .where(and(eq(schema.readingAttempts.userId, owner.userId), eq(schema.readingAttempts.bookId, alphaOne.bookId)));
+      expect(attempts).toEqual([{ origin: 'komga', outcome: 'completed' }]);
+
+      expect((await komgaGet(trackerV2(), grouped)).json()).toEqual({
+        booksCount: 4,
+        booksReadCount: 1,
+        booksUnreadCount: 3,
+        booksInProgressCount: 0,
+        lastReadContinuousNumberSort: 1,
+        maxNumberSort: 4,
+      });
+      expect((await komgaGet(trackerV1(), grouped)).json()).toEqual({
+        booksCount: 4,
+        booksReadCount: 1,
+        booksUnreadCount: 3,
+        booksInProgressCount: 0,
+        lastReadContinuousIndex: 1,
+      });
+    });
+
+    it('advances the Tachiyomi tracker without ever marking books unread', async () => {
+      expect((await komgaSend('PUT', trackerV2(), grouped, { lastBookNumberSortRead: 2 })).statusCode).toBe(204);
+      expect((await komgaGet(trackerV2(), grouped)).json()).toMatchObject({ booksReadCount: 2, lastReadContinuousNumberSort: 2 });
+
+      expect((await komgaSend('PUT', trackerV2(), grouped, { lastBookNumberSortRead: 1 })).statusCode).toBe(204);
+      expect((await komgaGet(trackerV2(), grouped)).json()).toMatchObject({ booksReadCount: 2, lastReadContinuousNumberSort: 2 });
+
+      expect((await komgaSend('PUT', trackerV1(), grouped, { lastBookRead: 3 })).statusCode).toBe(204);
+      expect((await komgaGet(trackerV1(), grouped)).json()).toMatchObject({ booksReadCount: 3, lastReadContinuousIndex: 3 });
+
+      const seriesB = (await komgaGet(`/komga/api/v1/series/${comicLibrary.libraryId}-s${seriesBId}`, grouped)).json() as { booksReadCount: number };
+      expect(seriesB.booksReadCount).toBe(1);
+    });
+
+    it('puts the next unread book on deck and serves the recency lists', async () => {
+      const onDeck = (await komgaGet('/komga/api/v1/books/ondeck', grouped)).json() as KomgaPageBody<BookBody>;
+      expect(onDeck.totalElements).toBe(1);
+      expect(onDeck.content).toEqual([
+        expect.objectContaining({ id: String(alphaLoose.bookId), seriesId: `${comicLibrary.libraryId}-s${seriesAId}`, readProgress: null }),
+      ]);
+
+      const latestBooks = (await komgaGet('/komga/api/v1/books/latest?size=2', grouped)).json() as KomgaPageBody<BookBody>;
+      expect(latestBooks.totalElements).toBe(5);
+      expect(latestBooks.content).toHaveLength(2);
+
+      const recent = new Map<string, string[]>();
+      for (const path of ['new', 'updated', 'latest']) {
+        const response = await komgaGet(`/komga/api/v1/series/${path}?library_id=${comicLibrary.libraryId}`, grouped);
+        expect(response.statusCode).toBe(200);
+        const page = response.json() as KomgaPageBody<SeriesBody>;
+        expect(page.content.length).toBe(page.totalElements);
+        recent.set(
+          path,
+          page.content.map((entry) => entry.id),
+        );
+      }
+      const allSeries = [`${comicLibrary.libraryId}-s${seriesAId}`, `${comicLibrary.libraryId}-s${seriesBId}`, `${comicLibrary.libraryId}-u`];
+      expect([...recent.get('new')!].sort()).toEqual(allSeries.sort());
+      expect([...recent.get('latest')!].sort()).toEqual(allSeries.sort());
+      expect(recent.get('updated')!.every((id) => allSeries.includes(id))).toBe(true);
+      expect((await komgaGet(`/komga/api/v1/series/new?library_id=${hiddenLibrary.libraryId}`, grouped)).statusCode).toBe(403);
+    });
+
+    it('reads web reader progress back through Komga and breaks the continuous run', async () => {
+      const saved = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/books/files/${alphaLoose.bookFileId}/progress`,
+        headers: authHeader(owner.accessToken),
+        payload: { pageNumber: 1, percentage: 50 },
+      });
+      expect(saved.statusCode).toBe(201);
+
+      const book = (await komgaGet(`/komga/api/v1/books/${alphaLoose.bookId}`, grouped)).json() as BookBody;
+      expect(book.readProgress).toMatchObject({ page: 1, completed: false });
+      expect((await komgaGet(trackerV2(), grouped)).json()).toMatchObject({
+        booksReadCount: 3,
+        booksInProgressCount: 1,
+        lastReadContinuousNumberSort: 3,
+      });
+
+      const onDeck = (await komgaGet('/komga/api/v1/books/ondeck', grouped)).json() as KomgaPageBody<BookBody>;
+      expect(onDeck.totalElements).toBe(0);
+    });
+
+    it('clears a book from a Komga client and resets its automatic status', async () => {
+      expect((await komgaSend('DELETE', `/komga/api/v1/books/${alphaOne.bookId}/read-progress`, grouped)).statusCode).toBe(204);
+
+      const webProgress = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/books/files/${alphaOne.bookFileId}/progress`,
+        headers: authHeader(owner.accessToken),
+      });
+      expect(webProgress.json()).toMatchObject({ pageNumber: null, percentage: 0 });
+
+      const book = (await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}`, grouped)).json() as BookBody;
+      expect(book.readProgress).toBeNull();
+
+      const [status] = await ctx.db
+        .select({ status: schema.userBookStatus.status })
+        .from(schema.userBookStatus)
+        .where(and(eq(schema.userBookStatus.userId, owner.userId), eq(schema.userBookStatus.bookId, alphaOne.bookId)));
+      expect(status?.status).toBe('unread');
+      expect((await komgaGet(trackerV2(), grouped)).json()).toMatchObject({ booksReadCount: 2, lastReadContinuousNumberSort: 0 });
+    });
+
+    it('marks and unmarks a whole series', async () => {
+      expect((await komgaSend('PATCH', `${seriesAPath()}/read-progress`, grouped)).statusCode).toBe(204);
+      expect((await komgaGet(trackerV2(), grouped)).json()).toMatchObject({
+        booksReadCount: 4,
+        booksInProgressCount: 0,
+        lastReadContinuousNumberSort: 4,
+      });
+
+      expect((await komgaSend('DELETE', `${seriesAPath()}/read-progress`, grouped)).statusCode).toBe(204);
+      expect((await komgaGet(trackerV2(), grouped)).json()).toMatchObject({ booksReadCount: 0, booksInProgressCount: 0, booksUnreadCount: 4 });
+
+      const webProgress = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/books/files/${alphaTwo.bookFileId}/progress`,
+        headers: authHeader(owner.accessToken),
+      });
+      expect(webProgress.json()).toMatchObject({ pageNumber: null, percentage: 0 });
+      const books = (await komgaGet(`${seriesAPath()}/books`, grouped)).json() as KomgaPageBody<BookBody>;
+      expect(books.content.every((entry) => entry.readProgress === null)).toBe(true);
+    });
+
+    it('rejects invalid writes, hidden books and pageless files', async () => {
+      const alphaOnePath = `/komga/api/v1/books/${alphaOne.bookId}/read-progress`;
+      expect((await komgaSend('PATCH', alphaOnePath, grouped, { page: 0 })).statusCode).toBe(400);
+      expect((await komgaSend('PATCH', alphaOnePath, grouped, { page: 3 })).statusCode).toBe(400);
+      expect((await komgaSend('PATCH', alphaOnePath, grouped, {})).statusCode).toBe(400);
+      expect((await komgaSend('PATCH', alphaOnePath, grouped, { completed: false })).statusCode).toBe(400);
+      expect((await komgaSend('PUT', trackerV2(), grouped, { lastBookNumberSortRead: 'two' })).statusCode).toBe(400);
+
+      expect((await komgaSend('PATCH', `/komga/api/v1/books/${hiddenComic.bookId}/read-progress`, grouped, { page: 1 })).statusCode).toBe(404);
+      expect((await komgaSend('DELETE', `/komga/api/v1/books/${hiddenComic.bookId}/read-progress`, grouped)).statusCode).toBe(404);
+      expect((await komgaSend('PATCH', `/komga/api/v1/books/${alphaTwo.bookId}/read-progress`, filteredCredentials, { page: 1 })).statusCode).toBe(
+        404,
+      );
+      expect((await komgaSend('PATCH', alphaOnePath, peerCredentials, { page: 1 })).statusCode).toBe(404);
+      expect((await komgaSend('PATCH', `/komga/api/v1/series/${comicLibrary.libraryId}-s999999/read-progress`, grouped)).statusCode).toBe(404);
+      expect((await komgaGet(`/komga/api/v2/series/${hiddenLibrary.libraryId}-u/read-progress/tachiyomi`, grouped)).statusCode).toBe(404);
+
+      const pdfPath = `/komga/api/v1/books/${manualPdf.bookId}/read-progress`;
+      expect((await komgaSend('PATCH', pdfPath, flat, { page: 1 })).statusCode).toBe(400);
+      expect((await komgaSend('PATCH', pdfPath, flat, { completed: true })).statusCode).toBe(204);
+      const pdf = (await komgaGet(`/komga/api/v1/books/${manualPdf.bookId}`, flat)).json() as BookBody;
+      expect(pdf.readProgress).toMatchObject({ page: 0, completed: true });
+
+      const readOnly = (await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}`, grouped)).json() as BookBody;
+      expect(readOnly.readProgress).toBeNull();
+    });
+  });
+
   async function komgaGet(url: string, credentials?: Credentials) {
     return ctx.app.inject({
       method: 'GET',
       url,
       headers: credentials ? { authorization: basicAuth(credentials.username, credentials.password) } : {},
+    });
+  }
+
+  async function komgaSend(method: 'PATCH' | 'PUT' | 'DELETE', url: string, credentials: Credentials, payload?: Record<string, unknown>) {
+    return ctx.app.inject({
+      method,
+      url,
+      headers: { authorization: basicAuth(credentials.username, credentials.password) },
+      ...(payload === undefined ? {} : { payload }),
     });
   }
 
