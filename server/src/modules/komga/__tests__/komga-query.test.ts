@@ -31,11 +31,16 @@ describe('komga query parsing', () => {
   });
 
   it('drops parameters Komga clients send that this server does not model', () => {
-    const parsed = parseKomgaQuery(bookListQuerySchema, { search: 'x', read_status: 'UNREAD', released_after: '2020-01-01' }) as Record<
+    const parsed = parseKomgaQuery(bookListQuerySchema, { search: 'x', released_after: '2020-01-01', sharing_label: 'kids' }) as Record<
       string,
       unknown
     >;
     expect(parsed).toEqual({ search: 'x' });
+  });
+
+  it('accepts repeated read status filters on series and book lists', () => {
+    expect(parseKomgaQuery(seriesListQuerySchema, { read_status: ['UNREAD', 'IN_PROGRESS'] }).read_status).toEqual(['UNREAD', 'IN_PROGRESS']);
+    expect(parseKomgaQuery(bookListQuerySchema, { read_status: 'READ' }).read_status).toEqual(['READ']);
   });
 
   it('validates page image conversion targets', () => {

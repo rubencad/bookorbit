@@ -12,9 +12,21 @@ const SERIES: KomgaSeriesRecord = {
   key: { kind: 'series', libraryId: 2, seriesId: 9 },
   name: 'Saga',
   booksCount: 2,
+  booksReadCount: 0,
+  booksInProgressCount: 0,
   createdAt: new Date('2026-01-01T00:00:00Z'),
   updatedAt: new Date('2026-01-02T00:00:00Z'),
   expectedBookCount: null,
+};
+const UNREAD = {
+  status: null,
+  statusSource: null,
+  finishedAt: null,
+  statusUpdatedAt: null,
+  pageNumber: null,
+  percentage: null,
+  lastReadAt: null,
+  progressUpdatedAt: null,
 };
 const AGGREGATE = {
   lowestBookId: 10,
@@ -54,6 +66,7 @@ function bookRecord(id: number): KomgaBookRecord {
     series: { key: SERIES.key, name: SERIES.name, number: String(id), numberSort: id },
     authors: [],
     tags: [],
+    readState: UNREAD,
   };
 }
 

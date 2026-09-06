@@ -61,6 +61,7 @@ export const seriesListQuerySchema = z.object({
   publisher: stringList,
   language: stringList,
   author: stringList,
+  read_status: stringList,
   deleted: flag,
   oneshot: flag,
 });
@@ -69,6 +70,7 @@ export type SeriesListQuery = z.infer<typeof seriesListQuerySchema>;
 export const seriesBooksQuerySchema = z.object({
   ...pageQuery,
   media_status: stringList,
+  read_status: stringList,
   tag: stringList,
   deleted: flag,
 });
@@ -79,6 +81,7 @@ export const bookListQuerySchema = z.object({
   search: singleString,
   library_id: idList,
   media_status: stringList,
+  read_status: stringList,
   tag: stringList,
   author: stringList,
   deleted: flag,

@@ -1,12 +1,13 @@
 import type { RequestUser } from '../../../common/types/request-user';
 import type { KomgaRequestAccount } from '../komga-auth.guard';
-import type { KomgaBookRecord, KomgaSeriesAggregate, KomgaSeriesRecord } from '../komga-catalog.types';
+import type { KomgaBookReadState, KomgaBookRecord, KomgaSeriesAggregate, KomgaSeriesRecord } from '../komga-catalog.types';
 import {
   formatKomgaDate,
   formatKomgaDateTime,
   humanizeBytes,
   isKomgaVisibleNonComicFormat,
   komgaMediaFor,
+  komgaReadProgressFor,
   seriesStatusFor,
   toKomgaBookDto,
   toKomgaLibraryDto,
@@ -20,9 +21,25 @@ function series(overrides: Partial<KomgaSeriesRecord> = {}): KomgaSeriesRecord {
     key: { kind: 'series', libraryId: 2, seriesId: 9 },
     name: 'Saga',
     booksCount: 3,
+    booksReadCount: 0,
+    booksInProgressCount: 0,
     createdAt: new Date('2026-01-02T03:04:05.678Z'),
     updatedAt: new Date('2026-02-03T04:05:06.789Z'),
     expectedBookCount: null,
+    ...overrides,
+  };
+}
+
+function readState(overrides: Partial<KomgaBookReadState> = {}): KomgaBookReadState {
+  return {
+    status: null,
+    statusSource: null,
+    finishedAt: null,
+    statusUpdatedAt: null,
+    pageNumber: null,
+    percentage: null,
+    lastReadAt: null,
+    progressUpdatedAt: null,
     ...overrides,
   };
 }
@@ -68,6 +85,7 @@ function book(overrides: Partial<KomgaBookRecord> = {}): KomgaBookRecord {
     series: { key: { kind: 'series', libraryId: 2, seriesId: 9 }, name: 'Saga', number: '1.5', numberSort: 1.5 },
     authors: [{ name: 'Fiona Staples', role: 'penciller' }],
     tags: ['space'],
+    readState: readState(),
     ...overrides,
   };
 }
@@ -103,8 +121,8 @@ describe('komga mapper', () => {
     expect(seriesStatusFor(series({ expectedBookCount: 3 }))).toBe('ENDED');
   });
 
-  it('builds a series dto with composite ids, all-unread counters and aggregated metadata', () => {
-    const dto = toKomgaSeriesDto(series({ expectedBookCount: 3 }), aggregate());
+  it('builds a series dto with composite ids, per-user counters and aggregated metadata', () => {
+    const dto = toKomgaSeriesDto(series({ expectedBookCount: 3, booksReadCount: 1, booksInProgressCount: 1 }), aggregate());
     expect(dto).toMatchObject({
       id: '2-s9',
       libraryId: '2',
@@ -114,9 +132,9 @@ describe('komga mapper', () => {
       lastModified: '2026-02-03T04:05:06Z',
       fileLastModified: '2026-02-03T04:05:06Z',
       booksCount: 3,
-      booksReadCount: 0,
-      booksUnreadCount: 3,
-      booksInProgressCount: 0,
+      booksReadCount: 1,
+      booksUnreadCount: 1,
+      booksInProgressCount: 1,
       deleted: false,
       oneshot: false,
     });
@@ -150,6 +168,48 @@ describe('komga mapper', () => {
         .filter((key) => key.endsWith('Lock'))
         .every((key) => (dto.metadata as Record<string, unknown>)[key] === false),
     ).toBe(true);
+  });
+
+  it('derives read progress from the progress row and the read status', () => {
+    const readAt = new Date('2026-03-01T10:00:00.000Z');
+    const modifiedAt = new Date('2026-03-01T10:00:01.000Z');
+    const inProgress = book({ readState: readState({ pageNumber: 12, percentage: 8, lastReadAt: readAt, progressUpdatedAt: modifiedAt }) });
+    expect(komgaReadProgressFor(inProgress)).toEqual({ page: 12, completed: false, readAt, modifiedAt });
+
+    const finishedByPercentage = book({
+      readState: readState({ pageNumber: 142, percentage: 100, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
+    });
+    expect(komgaReadProgressFor(finishedByPercentage)?.completed).toBe(true);
+
+    const finishedByStatus = book({
+      readState: readState({ status: 'read', pageNumber: 12, percentage: 8, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
+    });
+    expect(komgaReadProgressFor(finishedByStatus)).toEqual({ page: 12, completed: true, readAt, modifiedAt });
+
+    const estimated = book({ readState: readState({ pageNumber: null, percentage: 50, lastReadAt: readAt, progressUpdatedAt: modifiedAt }) });
+    expect(komgaReadProgressFor(estimated)?.page).toBe(71);
+
+    const beyondEnd = book({ readState: readState({ pageNumber: 900, percentage: 99, lastReadAt: readAt, progressUpdatedAt: modifiedAt }) });
+    expect(komgaReadProgressFor(beyondEnd)?.page).toBe(142);
+  });
+
+  it('reports a status-only read as completed on the last page and nothing for untouched books', () => {
+    const finishedAt = new Date('2026-02-20T00:00:00.000Z');
+    const statusUpdatedAt = new Date('2026-02-21T00:00:00.000Z');
+    const statusOnly = book({ readState: readState({ status: 'read', statusSource: 'manual', finishedAt, statusUpdatedAt }) });
+    expect(komgaReadProgressFor(statusOnly)).toEqual({ page: 142, completed: true, readAt: finishedAt, modifiedAt: statusUpdatedAt });
+    expect(toKomgaBookDto(statusOnly).readProgress).toEqual({
+      page: 142,
+      completed: true,
+      readDate: '2026-02-20T00:00:00Z',
+      created: '2026-02-21T00:00:00Z',
+      lastModified: '2026-02-21T00:00:00Z',
+      deviceId: '',
+      deviceName: 'BookOrbit',
+    });
+
+    expect(komgaReadProgressFor(book({ readState: readState({ status: 'reading', statusUpdatedAt }) }))).toBeNull();
+    expect(toKomgaBookDto(book()).readProgress).toBeNull();
   });
 
   it('marks oneshot series and empties missing aggregate values', () => {

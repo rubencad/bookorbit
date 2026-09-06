@@ -7,8 +7,22 @@ import { ComicPageService, type ComicFileRef, type ComicPageStream } from '../co
 import type { ComicPageEntry } from '../comic-pages/lib/comic-page-entry';
 import { BookService } from '../book/book.service';
 import type { KomgaRequestAccount } from './komga-auth.guard';
-import { KOMGA_BOOK_SORT_PROPERTIES, KomgaCatalogRepository, type KomgaBookRow, type KomgaComicCreditsRow } from './komga-catalog.repository';
-import type { KomgaAuthorRef, KomgaBookFileRecord, KomgaBookRecord, KomgaBookSeriesContext, KomgaScope } from './komga-catalog.types';
+import {
+  KOMGA_BOOK_SORT_PROPERTIES,
+  KomgaCatalogRepository,
+  type KomgaBookRow,
+  type KomgaComicCreditsRow,
+  type KomgaProgressRow,
+  type KomgaStatusRow,
+} from './komga-catalog.repository';
+import type {
+  KomgaAuthorRef,
+  KomgaBookFileRecord,
+  KomgaBookReadState,
+  KomgaBookRecord,
+  KomgaBookSeriesContext,
+  KomgaScope,
+} from './komga-catalog.types';
 import { formatSeriesId, type KomgaSeriesKey } from './komga-ids';
 import { KomgaLibraryService } from './komga-library.service';
 import { buildKomgaPage, resolvePageRequest, type KomgaPage, type KomgaRecordPage } from './komga-page-response';
@@ -79,7 +93,7 @@ export class KomgaBookService {
     const scope = await this.libraryService.resolveScope(user, account, query.library_id);
     const { bookIds, total } = await this.repository.listBooks(
       scope,
-      { search: query.search, mediaStatuses: query.media_status, tags: query.tag, authors: query.author },
+      { search: query.search, mediaStatuses: query.media_status, readStatuses: query.read_status, tags: query.tag, authors: query.author },
       page,
     );
     const records = await this.buildRecords(scope, bookIds);
@@ -138,7 +152,7 @@ export class KomgaBookService {
 
   async buildRecords(scope: KomgaScope, bookIds: number[], context?: KomgaSeriesKey): Promise<KomgaBookRecord[]> {
     if (bookIds.length === 0) return [];
-    const hydration = await this.repository.hydrateBooks(bookIds);
+    const hydration = await this.repository.hydrateBooks(bookIds, scope.userId);
     const rowsById = new Map(hydration.books.map((row) => [row.id, row]));
 
     const drafts: Array<{ row: KomgaBookRow; file: KomgaBookFileRecord; key: KomgaSeriesKey; seriesName: string; index: string | null }> = [];
@@ -191,8 +205,22 @@ export class KomgaBookService {
         series,
         authors: this.authorsFor(hydration.authors.get(row.id) ?? [], hydration.credits.get(row.id)),
         tags: hydration.tags.get(row.id) ?? [],
+        readState: this.readStateFor(hydration.progress.get(file.id), hydration.statuses.get(row.id)),
       };
     });
+  }
+
+  private readStateFor(progress: KomgaProgressRow | undefined, status: KomgaStatusRow | undefined): KomgaBookReadState {
+    return {
+      status: status?.status ?? null,
+      statusSource: status?.source ?? null,
+      finishedAt: status?.finishedAt ?? null,
+      statusUpdatedAt: status?.updatedAt ?? null,
+      pageNumber: progress?.pageNumber ?? null,
+      percentage: progress?.percentage ?? null,
+      lastReadAt: progress?.lastReadAt ?? null,
+      progressUpdatedAt: progress?.updatedAt ?? null,
+    };
   }
 
   private numberedContext(

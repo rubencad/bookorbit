@@ -5,7 +5,7 @@ import { esc, OPDS_MIME_ACQ, OPDS_MIME_NAV, OPDS_MIME_SEARCH, toRfc3339Seconds, 
 import type { KomgaBookRecord, KomgaLibraryRecord, KomgaSeriesAggregate, KomgaSeriesRecord } from './komga-catalog.types';
 import { formatSeriesId } from './komga-ids';
 import type { KomgaPageRequest } from './komga-page-response';
-import { humanizeBytes, komgaMediaFor, komgaMediaType } from './komga.mapper';
+import { humanizeBytes, komgaMediaFor, komgaMediaType, komgaReadProgressFor, type KomgaReadProgress } from './komga.mapper';
 
 export const KOMGA_OPDS_BASE = '/komga/opds/v1.2';
 export const KOMGA_OPDS_SEARCH_TEMPLATE = `${KOMGA_OPDS_BASE}/series?search={searchTerms}`;
@@ -108,13 +108,18 @@ export function komgaOpdsSeriesEntry(series: KomgaSeriesRecord, aggregate: Komga
   return komgaOpdsNavEntry(id, series.name, `${KOMGA_OPDS_BASE}/series/${id}`, series.updatedAt, aggregate?.summary ?? '');
 }
 
-function pageStreamLink(book: KomgaBookRecord): string | null {
+function pageStreamLink(book: KomgaBookRecord, progress: KomgaReadProgress | null): string | null {
   const pageCount = book.file.pageCount ?? 0;
   if (komgaMediaFor(book.file.format).mediaProfile !== 'DIVINA' || pageCount <= 0) return null;
 
+  const attributes: Record<string, string> = { 'pse:count': String(pageCount) };
+  if (progress && progress.page > 0) {
+    attributes['pse:lastRead'] = String(Math.min(progress.page, pageCount));
+    attributes['pse:lastReadDate'] = toRfc3339Seconds(progress.readAt);
+  }
   const format = pseStreamFormat(book.file.pageMediaType);
   const href = `${KOMGA_OPDS_BASE}/books/${book.id}/pages/{pageNumber}?convert=${format}`;
-  return xmlLink(OPDS_PSE_STREAM_REL, href, pseStreamType(format), undefined, { 'pse:count': String(pageCount) });
+  return xmlLink(OPDS_PSE_STREAM_REL, href, pseStreamType(format), undefined, attributes);
 }
 
 export function komgaOpdsBookEntry(book: KomgaBookRecord, prependSeries = false): string {
@@ -124,12 +129,15 @@ export function komgaOpdsBookEntry(book: KomgaBookRecord, prependSeries = false)
   const content = summary
     ? `${extension} - ${humanizeBytes(book.file.sizeBytes ?? 0)}\n\n${summary}`
     : `${extension} - ${humanizeBytes(book.file.sizeBytes ?? 0)}`;
+  const progress = komgaReadProgressFor(book);
+  // Progress rides on the entry version so caching clients refetch the lastRead attribute.
+  const updated = progress && progress.readAt > book.updatedAt ? progress.readAt : book.updatedAt;
 
   const lines = [
     '  <entry>',
     `    ${xmlEl('title', title)}`,
     `    ${xmlEl('id', String(book.id))}`,
-    `    ${xmlEl('updated', toRfc3339Seconds(book.updatedAt))}`,
+    `    ${xmlEl('updated', toRfc3339Seconds(updated))}`,
     `    <content type="text">${esc(content)}</content>`,
   ];
 
@@ -145,7 +153,7 @@ export function komgaOpdsBookEntry(book: KomgaBookRecord, prependSeries = false)
     `    ${xmlLink('http://opds-spec.org/acquisition', `${KOMGA_OPDS_BASE}/books/${book.id}/file/${encodeURIComponent(fileName)}`, komgaMediaType(book.file.format))}`,
   );
 
-  const stream = pageStreamLink(book);
+  const stream = pageStreamLink(book, progress);
   if (stream) lines.push(`    ${stream}`);
 
   lines.push('  </entry>');

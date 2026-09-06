@@ -12,6 +12,8 @@ const SERIES: KomgaSeriesRecord = {
   key: { kind: 'series', libraryId: 2, seriesId: 9 },
   name: 'Saga',
   booksCount: 2,
+  booksReadCount: 0,
+  booksInProgressCount: 0,
   createdAt: NOW,
   updatedAt: NOW,
   expectedBookCount: null,
@@ -54,6 +56,16 @@ const BOOK: KomgaBookRecord = {
   series: { key: SERIES.key, name: 'Saga', number: '1', numberSort: 1 },
   authors: [],
   tags: [],
+  readState: {
+    status: null,
+    statusSource: null,
+    finishedAt: null,
+    statusUpdatedAt: null,
+    pageNumber: null,
+    percentage: null,
+    lastReadAt: null,
+    progressUpdatedAt: null,
+  },
 };
 
 function createService() {

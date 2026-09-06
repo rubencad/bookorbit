@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { SQL, and, eq, exists, inArray, notExists, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { EBOOK_FORMAT_LIST } from '@bookorbit/types';
+import { EBOOK_FORMAT_LIST, type ReadStatus, type ReadStatusSource } from '@bookorbit/types';
 import { COMIC_CONTAINER_FORMATS } from '../../common/comic-format-detect';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
@@ -19,7 +19,9 @@ import {
   comicMetadata,
   genres,
   libraries,
+  readingProgress,
   tags,
+  userBookStatus,
   userLibraryAccess,
 } from '../../db/schema';
 import { accentInsensitiveIlike, buildSearchPattern } from '../../common/utils/accent-insensitive-search.utils';
@@ -48,12 +50,14 @@ export interface KomgaSeriesFilters {
   publishers?: string[];
   languages?: string[];
   authors?: string[];
+  readStatuses?: string[];
   oneshot?: boolean;
 }
 
 export interface KomgaBookFilters {
   search?: string;
   mediaStatuses?: string[];
+  readStatuses?: string[];
   tags?: string[];
   authors?: string[];
 }
@@ -111,6 +115,22 @@ export interface KomgaComicCreditsRow {
   coverArtists: string[] | null;
 }
 
+export interface KomgaProgressRow {
+  bookFileId: number;
+  pageNumber: number | null;
+  percentage: number;
+  lastReadAt: Date;
+  updatedAt: Date;
+}
+
+export interface KomgaStatusRow {
+  bookId: number;
+  status: ReadStatus;
+  source: ReadStatusSource;
+  finishedAt: Date | null;
+  updatedAt: Date;
+}
+
 export interface KomgaBookHydration {
   books: KomgaBookRow[];
   files: Map<number, KomgaBookFileRecord[]>;
@@ -118,6 +138,8 @@ export interface KomgaBookHydration {
   tags: Map<number, string[]>;
   credits: Map<number, KomgaComicCreditsRow>;
   memberships: Map<number, KomgaMembershipRow[]>;
+  progress: Map<number, KomgaProgressRow>;
+  statuses: Map<number, KomgaStatusRow>;
 }
 
 type SeriesSourceRow = {
@@ -126,10 +148,15 @@ type SeriesSourceRow = {
   book_id: number | null;
   name: string;
   books_count: number;
+  books_read_count: number;
+  books_in_progress_count: number;
   created_at: Date;
   updated_at: Date;
   expected_book_count: number | null;
 };
+
+const READ_STATUS_FILTERS = ['UNREAD', 'IN_PROGRESS', 'READ'] as const;
+type ReadStatusFilter = (typeof READ_STATUS_FILTERS)[number];
 
 const NON_COMIC_VISIBLE_FORMATS: readonly string[] = EBOOK_FORMAT_LIST;
 const PAGE_LAYOUT_FORMATS: readonly string[] = ['pdf', 'djvu'];
@@ -375,7 +402,7 @@ export class KomgaCatalogRepository {
     return row?.id ?? null;
   }
 
-  async hydrateBooks(bookIds: number[]): Promise<KomgaBookHydration> {
+  async hydrateBooks(bookIds: number[], userId: number): Promise<KomgaBookHydration> {
     const hydration: KomgaBookHydration = {
       books: [],
       files: new Map(),
@@ -383,10 +410,12 @@ export class KomgaCatalogRepository {
       tags: new Map(),
       credits: new Map(),
       memberships: new Map(),
+      progress: new Map(),
+      statuses: new Map(),
     };
     if (bookIds.length === 0) return hydration;
 
-    const [bookRows, fileRows, authorRows, tagRows, creditRows, membershipRows] = await Promise.all([
+    const [bookRows, fileRows, authorRows, tagRows, creditRows, membershipRows, progressRows, statusRows] = await Promise.all([
       this.db
         .select({
           id: books.id,
@@ -458,6 +487,27 @@ export class KomgaCatalogRepository {
         .innerJoin(bookSeries, eq(bookSeries.id, bookSeriesMemberships.seriesId))
         .where(inArray(bookSeriesMemberships.bookId, bookIds))
         .orderBy(bookSeriesMemberships.displayOrder),
+      this.db
+        .select({
+          bookFileId: readingProgress.bookFileId,
+          pageNumber: readingProgress.pageNumber,
+          percentage: readingProgress.percentage,
+          lastReadAt: readingProgress.lastReadAt,
+          updatedAt: readingProgress.updatedAt,
+        })
+        .from(readingProgress)
+        .innerJoin(bookFiles, eq(bookFiles.id, readingProgress.bookFileId))
+        .where(and(inArray(bookFiles.bookId, bookIds), eq(readingProgress.userId, userId))),
+      this.db
+        .select({
+          bookId: userBookStatus.bookId,
+          status: userBookStatus.status,
+          source: userBookStatus.source,
+          finishedAt: userBookStatus.finishedAt,
+          updatedAt: userBookStatus.updatedAt,
+        })
+        .from(userBookStatus)
+        .where(and(inArray(userBookStatus.bookId, bookIds), eq(userBookStatus.userId, userId))),
     ]);
 
     hydration.books = bookRows;
@@ -483,6 +533,8 @@ export class KomgaCatalogRepository {
       list.push(row);
       hydration.memberships.set(row.bookId, list);
     }
+    for (const row of progressRows) hydration.progress.set(row.bookFileId, row);
+    for (const row of statusRows) hydration.statuses.set(row.bookId, row);
     return hydration;
   }
 
@@ -573,6 +625,22 @@ export class KomgaCatalogRepository {
     const base = this.baseClauses(scope);
     const bookPredicates = this.seriesBookPredicates(filters);
     const searchPattern = filters.search?.trim() ? buildSearchPattern(filters.search.trim()) : null;
+    const readStatuses = parseReadStatusFilters(filters.readStatuses);
+    if (readStatuses?.length === 0) return null;
+    const { read, inProgress } = this.readStateClauses(scope.userId);
+    const readCount = sql`count(*) FILTER (WHERE ${read})`;
+    const inProgressCount = sql`count(*) FILTER (WHERE ${inProgress})`;
+    const groupedCounts = sql`${readCount}::integer AS books_read_count, ${inProgressCount}::integer AS books_in_progress_count`;
+    const groupedReadStatus = readStatuses
+      ? joinSql(
+          readStatuses.map((status) => {
+            if (status === 'READ') return sql`${readCount} = count(*)`;
+            if (status === 'UNREAD') return sql`(${readCount} = 0 AND ${inProgressCount} = 0)`;
+            return sql`(${readCount} < count(*) AND (${readCount} > 0 OR ${inProgressCount} > 0))`;
+          }),
+          sql` OR `,
+        )
+      : null;
     const branches: SQL[] = [];
 
     const includeNamed = (key === undefined || key.kind === 'series') && filters.oneshot !== true;
@@ -585,8 +653,9 @@ export class KomgaCatalogRepository {
         const ended = sql`(${bookSeries.expectedBookCount} IS NOT NULL AND count(*) >= ${bookSeries.expectedBookCount})`;
         having.push(wantsEnded ? ended : sql`NOT ${ended}`);
       }
+      if (groupedReadStatus) having.push(sql`(${groupedReadStatus})`);
       branches.push(sql`SELECT ${books.libraryId} AS library_id, ${bookSeriesMemberships.seriesId} AS series_id, NULL::integer AS book_id, ${bookSeries.name} AS name,
-        count(*)::integer AS books_count, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, ${bookSeries.expectedBookCount} AS expected_book_count
+        count(*)::integer AS books_count, ${groupedCounts}, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, ${bookSeries.expectedBookCount} AS expected_book_count
         FROM ${books}
         INNER JOIN ${bookSeriesMemberships} ON ${bookSeriesMemberships.bookId} = ${books.id}
         INNER JOIN ${bookSeries} ON ${bookSeries.id} = ${bookSeriesMemberships.seriesId}
@@ -604,8 +673,9 @@ export class KomgaCatalogRepository {
     const includeUnknown = scope.groupUnknownSeries && (key === undefined || key.kind === 'unknown') && filters.oneshot !== true && wantsOngoing;
     if (includeUnknown && (!searchPattern || matchesTitle(KOMGA_UNKNOWN_SERIES_TITLE, filters.search!))) {
       const having = bookPredicates.map((predicate) => sql`bool_or(${predicate})`);
+      if (groupedReadStatus) having.push(sql`(${groupedReadStatus})`);
       branches.push(sql`SELECT ${books.libraryId} AS library_id, NULL::integer AS series_id, NULL::integer AS book_id, ${KOMGA_UNKNOWN_SERIES_TITLE}::varchar AS name,
-        count(*)::integer AS books_count, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, NULL::integer AS expected_book_count
+        count(*)::integer AS books_count, ${groupedCounts}, min(${books.addedAt}) AS created_at, max(${books.updatedAt}) AS updated_at, NULL::integer AS expected_book_count
         FROM ${books}
         WHERE ${and(...base, unmembered)}
         GROUP BY ${books.libraryId}
@@ -617,8 +687,10 @@ export class KomgaCatalogRepository {
       const oneshotClauses: SQL[] = [...base, unmembered, ...bookPredicates];
       if (key?.kind === 'oneshot') oneshotClauses.push(eq(books.id, key.bookId));
       if (searchPattern) oneshotClauses.push(accentInsensitiveIlike(bookMetadata.title, searchPattern));
+      if (readStatuses) oneshotClauses.push(this.readStatusClause(readStatuses, read, inProgress));
       branches.push(sql`SELECT ${books.libraryId} AS library_id, NULL::integer AS series_id, ${books.id} AS book_id, ${this.bookTitleSql()} AS name,
-        1 AS books_count, ${books.addedAt} AS created_at, ${books.updatedAt} AS updated_at, NULL::integer AS expected_book_count
+        1 AS books_count, (CASE WHEN ${read} THEN 1 ELSE 0 END) AS books_read_count, (CASE WHEN ${inProgress} THEN 1 ELSE 0 END) AS books_in_progress_count,
+        ${books.addedAt} AS created_at, ${books.updatedAt} AS updated_at, NULL::integer AS expected_book_count
         FROM ${books}
         LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
         WHERE ${and(...oneshotClauses)}`);
@@ -626,6 +698,37 @@ export class KomgaCatalogRepository {
 
     if (branches.length === 0) return null;
     return joinSql(branches, sql` UNION ALL `);
+  }
+
+  private readStateClauses(userId: number): { read: SQL; inProgress: SQL } {
+    const progressFor = (...extra: SQL[]) =>
+      exists(
+        this.db
+          .select({ one: sql`1` })
+          .from(readingProgress)
+          .innerJoin(bookFiles, eq(bookFiles.id, readingProgress.bookFileId))
+          .where(and(sql`${bookFiles.bookId} = ${books.id}`, eq(bookFiles.role, 'content'), eq(readingProgress.userId, userId), ...extra)),
+      );
+    const statusRead = exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(userBookStatus)
+        .where(and(sql`${userBookStatus.bookId} = ${books.id}`, eq(userBookStatus.userId, userId), eq(userBookStatus.status, 'read'))),
+    );
+    const read = sql`(${statusRead} OR ${progressFor(sql`${readingProgress.percentage} >= 100`)})`;
+    return { read, inProgress: sql`(NOT ${read} AND ${progressFor()})` };
+  }
+
+  private readStatusClause(statuses: ReadStatusFilter[], read: SQL, inProgress: SQL): SQL {
+    if (statuses.length === 0) return sql`false`;
+    return sql`(${joinSql(
+      statuses.map((status) => {
+        if (status === 'READ') return read;
+        if (status === 'IN_PROGRESS') return inProgress;
+        return sql`(NOT ${read} AND NOT ${inProgress})`;
+      }),
+      sql` OR `,
+    )})`;
   }
 
   private seriesBookPredicates(filters: KomgaSeriesFilters): SQL[] {
@@ -674,6 +777,11 @@ export class KomgaCatalogRepository {
     }
     const mediaClause = this.mediaStatusClause(scope, filters.mediaStatuses);
     if (mediaClause) clauses.push(mediaClause);
+    const readStatuses = parseReadStatusFilters(filters.readStatuses);
+    if (readStatuses) {
+      const { read, inProgress } = this.readStateClauses(scope.userId);
+      clauses.push(this.readStatusClause(readStatuses, read, inProgress));
+    }
     return clauses;
   }
 
@@ -853,6 +961,8 @@ function toSeriesRecord(row: SeriesSourceRow): KomgaSeriesRecord {
     key,
     name: row.name,
     booksCount: Number(row.books_count),
+    booksReadCount: Number(row.books_read_count),
+    booksInProgressCount: Number(row.books_in_progress_count),
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
     expectedBookCount: row.expected_book_count === null ? null : Number(row.expected_book_count),
@@ -861,4 +971,10 @@ function toSeriesRecord(row: SeriesSourceRow): KomgaSeriesRecord {
 
 function matchesTitle(title: string, search: string): boolean {
   return title.toLowerCase().includes(search.trim().toLowerCase());
+}
+
+function parseReadStatusFilters(values: string[] | undefined): ReadStatusFilter[] | undefined {
+  if (!values?.length) return undefined;
+  const wanted = new Set(values.map((value) => value.trim().toUpperCase()));
+  return READ_STATUS_FILTERS.filter((status) => wanted.has(status));
 }

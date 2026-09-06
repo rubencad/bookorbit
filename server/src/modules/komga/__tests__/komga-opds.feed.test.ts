@@ -36,6 +36,16 @@ function bookRecord(overrides: Partial<KomgaBookRecord> = {}): KomgaBookRecord {
     series: { key: { kind: 'series', libraryId: 7, seriesId: 3 }, name: 'A Series', number: '1', numberSort: 1 },
     authors: [{ name: 'Jane Doe', role: 'writer' }],
     tags: [],
+    readState: {
+      status: null,
+      statusSource: null,
+      finishedAt: null,
+      statusUpdatedAt: null,
+      pageNumber: null,
+      percentage: null,
+      lastReadAt: null,
+      progressUpdatedAt: null,
+    },
     ...overrides,
   };
 }
@@ -45,6 +55,8 @@ function seriesRecord(overrides: Partial<KomgaSeriesRecord> = {}): KomgaSeriesRe
     key: { kind: 'series', libraryId: 7, seriesId: 3 },
     name: 'A Series',
     booksCount: 4,
+    booksReadCount: 0,
+    booksInProgressCount: 0,
     createdAt: updatedAt,
     updatedAt,
     expectedBookCount: null,
@@ -107,6 +119,26 @@ describe('komgaOpdsBookEntry', () => {
 
     expect(entry).toContain('?convert=png');
     expect(entry).toContain('type="image/png"');
+  });
+
+  it('advertises the last read page and dates the entry by that read', () => {
+    const lastReadAt = new Date('2026-03-04T05:06:07.890Z');
+    const entry = komgaOpdsBookEntry(
+      bookRecord({
+        readState: { ...bookRecord().readState, pageNumber: 30, percentage: 100, lastReadAt, progressUpdatedAt: lastReadAt },
+      }),
+    );
+
+    expect(entry).toContain('pse:lastRead="24"');
+    expect(entry).toContain('pse:lastReadDate="2026-03-04T05:06:07Z"');
+    expect(entry).toContain('<updated>2026-03-04T05:06:07Z</updated>');
+  });
+
+  it('omits lastRead attributes for unread books', () => {
+    const entry = komgaOpdsBookEntry(bookRecord());
+
+    expect(entry).not.toContain('pse:lastRead');
+    expect(entry).toContain('<updated>2026-01-02T03:04:05Z</updated>');
   });
 
   it('omits page streaming for books that are not comics', () => {

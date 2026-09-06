@@ -1,4 +1,4 @@
-import type { ContentFilterRules } from '@bookorbit/types';
+import type { ContentFilterRules, ReadStatus, ReadStatusSource } from '@bookorbit/types';
 
 import type { KomgaSeriesKey } from './komga-ids';
 import type { KomgaAuthorRole } from './komga.constants';
@@ -23,6 +23,8 @@ export interface KomgaSeriesRecord {
   key: KomgaSeriesKey;
   name: string;
   booksCount: number;
+  booksReadCount: number;
+  booksInProgressCount: number;
   createdAt: Date;
   updatedAt: Date;
   expectedBookCount: number | null;
@@ -64,6 +66,17 @@ export interface KomgaBookSeriesContext {
   numberSort: number;
 }
 
+export interface KomgaBookReadState {
+  status: ReadStatus | null;
+  statusSource: ReadStatusSource | null;
+  finishedAt: Date | null;
+  statusUpdatedAt: Date | null;
+  pageNumber: number | null;
+  percentage: number | null;
+  lastReadAt: Date | null;
+  progressUpdatedAt: Date | null;
+}
+
 export interface KomgaBookRecord {
   id: number;
   libraryId: number;
@@ -79,6 +92,7 @@ export interface KomgaBookRecord {
   series: KomgaBookSeriesContext;
   authors: KomgaAuthorRef[];
   tags: string[];
+  readState: KomgaBookReadState;
 }
 
 export interface KomgaSeriesNumbering {

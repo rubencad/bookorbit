@@ -60,6 +60,8 @@ describe('KomgaCatalogRepository', () => {
             book_id: null,
             name: 'Saga',
             books_count: 3,
+            books_read_count: 1,
+            books_in_progress_count: 1,
             created_at: '2026-01-01T00:00:00Z',
             updated_at: '2026-01-02T00:00:00Z',
             expected_book_count: 3,
@@ -70,6 +72,8 @@ describe('KomgaCatalogRepository', () => {
             book_id: null,
             name: 'Unknown Series',
             books_count: 1,
+            books_read_count: 0,
+            books_in_progress_count: 0,
             created_at: '2026-01-01T00:00:00Z',
             updated_at: '2026-01-01T00:00:00Z',
             expected_book_count: null,
@@ -80,6 +84,8 @@ describe('KomgaCatalogRepository', () => {
             book_id: 77,
             name: 'Standalone',
             books_count: 1,
+            books_read_count: 1,
+            books_in_progress_count: 0,
             created_at: '2026-01-01T00:00:00Z',
             updated_at: '2026-01-01T00:00:00Z',
             expected_book_count: null,
@@ -95,7 +101,21 @@ describe('KomgaCatalogRepository', () => {
       { kind: 'unknown', libraryId: 2 },
       { kind: 'oneshot', libraryId: 2, bookId: 77 },
     ]);
-    expect(rows[0]).toMatchObject({ name: 'Saga', booksCount: 3, expectedBookCount: 3, createdAt: new Date('2026-01-01T00:00:00Z') });
+    expect(rows[0]).toMatchObject({
+      name: 'Saga',
+      booksCount: 3,
+      booksReadCount: 1,
+      booksInProgressCount: 1,
+      expectedBookCount: 3,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    expect(rows[2]).toMatchObject({ booksReadCount: 1, booksInProgressCount: 0 });
+  });
+
+  it('returns no series when every requested read status is unknown', async () => {
+    const { repository, db } = makeRepository();
+    await expect(repository.listSeries(SCOPE, { readStatuses: ['SKIMMED'] }, PAGE)).resolves.toEqual({ rows: [], total: 0 });
+    expect(db.execute).not.toHaveBeenCalled();
   });
 
   it('maps aggregate query results and defaults missing values', async () => {

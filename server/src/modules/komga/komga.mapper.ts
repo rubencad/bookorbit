@@ -137,9 +137,9 @@ export function toKomgaSeriesDto(series: KomgaSeriesRecord, aggregate: KomgaSeri
     lastModified,
     fileLastModified: lastModified,
     booksCount: series.booksCount,
-    booksReadCount: 0,
-    booksUnreadCount: series.booksCount,
-    booksInProgressCount: 0,
+    booksReadCount: series.booksReadCount,
+    booksUnreadCount: Math.max(series.booksCount - series.booksReadCount - series.booksInProgressCount, 0),
+    booksInProgressCount: series.booksInProgressCount,
     metadata: {
       status: seriesStatusFor(series),
       statusLock: false,
@@ -186,9 +186,52 @@ export function toKomgaSeriesDto(series: KomgaSeriesRecord, aggregate: KomgaSeri
   };
 }
 
+export interface KomgaReadProgress {
+  page: number;
+  completed: boolean;
+  readAt: Date;
+  modifiedAt: Date;
+}
+
+export function komgaPagesCount(book: KomgaBookRecord): number {
+  return komgaMediaFor(book.file.format).mediaProfile === 'DIVINA' ? Math.max(book.file.pageCount ?? 0, 0) : 0;
+}
+
+// Treat a read status or 100% progress as complete because reread projection can lag behind the progress write.
+export function komgaReadProgressFor(book: KomgaBookRecord): KomgaReadProgress | null {
+  const { readState } = book;
+  const pagesCount = komgaPagesCount(book);
+  const statusRead = readState.status === 'read';
+  if (readState.percentage !== null && readState.lastReadAt && readState.progressUpdatedAt) {
+    const completed = statusRead || readState.percentage >= 100;
+    const storedPage = readState.pageNumber && readState.pageNumber > 0 ? readState.pageNumber : null;
+    const estimatedPage = pagesCount > 0 ? Math.max(1, Math.round((readState.percentage / 100) * pagesCount)) : 0;
+    const page = storedPage !== null ? (pagesCount > 0 ? Math.min(storedPage, pagesCount) : storedPage) : estimatedPage;
+    return { page, completed, readAt: readState.lastReadAt, modifiedAt: readState.progressUpdatedAt };
+  }
+  if (statusRead && readState.statusUpdatedAt) {
+    return { page: pagesCount, completed: true, readAt: readState.finishedAt ?? readState.statusUpdatedAt, modifiedAt: readState.statusUpdatedAt };
+  }
+  return null;
+}
+
+export function toKomgaReadProgressDto(progress: KomgaReadProgress | null) {
+  if (!progress) return null;
+  const modified = formatKomgaDateTime(progress.modifiedAt);
+  return {
+    page: progress.page,
+    completed: progress.completed,
+    readDate: formatKomgaDateTime(progress.readAt),
+    created: modified,
+    lastModified: modified,
+    deviceId: '',
+    deviceName: 'BookOrbit',
+  };
+}
+
 export function toKomgaBookDto(book: KomgaBookRecord) {
   const media = komgaMediaFor(book.file.format);
-  const pagesCount = media.mediaProfile === 'DIVINA' ? Math.max(book.file.pageCount ?? 0, 0) : 0;
+  const pagesCount = komgaPagesCount(book);
   const sizeBytes = book.file.sizeBytes ?? 0;
   const created = formatKomgaDateTime(book.addedAt);
   return {
@@ -235,7 +278,7 @@ export function toKomgaBookDto(book: KomgaBookRecord) {
       created,
       lastModified: formatKomgaDateTime(book.metadataUpdatedAt ?? book.updatedAt),
     },
-    readProgress: null,
+    readProgress: toKomgaReadProgressDto(komgaReadProgressFor(book)),
     deleted: false,
     fileHash: book.file.fileHash ?? '',
     oneshot: book.series.key.kind === 'oneshot',

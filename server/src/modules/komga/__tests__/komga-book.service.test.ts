@@ -56,7 +56,17 @@ function row(overrides: Partial<KomgaBookRow> = {}): KomgaBookRow {
 }
 
 function hydration(overrides: Partial<KomgaBookHydration> = {}): KomgaBookHydration {
-  return { books: [], files: new Map(), authors: new Map(), tags: new Map(), credits: new Map(), memberships: new Map(), ...overrides };
+  return {
+    books: [],
+    files: new Map(),
+    authors: new Map(),
+    tags: new Map(),
+    credits: new Map(),
+    memberships: new Map(),
+    progress: new Map(),
+    statuses: new Map(),
+    ...overrides,
+  };
 }
 
 function makeService(hydrated: KomgaBookHydration, numbering = new Map()) {
@@ -176,6 +186,30 @@ describe('KomgaBookService', () => {
       const { service, repository } = makeService(hydration());
       await expect(service.buildRecords(SCOPE, [])).resolves.toEqual([]);
       expect(repository.hydrateBooks).not.toHaveBeenCalled();
+    });
+
+    it('attaches the progress of the chosen file and the status of the book for the scope user', async () => {
+      const readAt = new Date('2026-03-01T00:00:00Z');
+      const hydrated = hydration({
+        books: [row({ id: 10 }), row({ id: 11 })],
+        files: new Map([
+          [10, [file({ id: 100 }), file({ id: 101, format: 'cbr' })]],
+          [11, [file({ id: 102 })]],
+        ]),
+        progress: new Map([
+          [101, { bookFileId: 101, pageNumber: 2, percentage: 66, lastReadAt: readAt, updatedAt: readAt }],
+          [100, { bookFileId: 100, pageNumber: 1, percentage: 33, lastReadAt: readAt, updatedAt: readAt }],
+        ]),
+        statuses: new Map([[11, { bookId: 11, status: 'read' as const, source: 'auto' as const, finishedAt: readAt, updatedAt: readAt }]]),
+      });
+      const { service, repository } = makeService(hydrated);
+
+      const [first, second] = await service.buildRecords(SCOPE, [10, 11]);
+
+      expect(repository.hydrateBooks).toHaveBeenCalledWith([10, 11], SCOPE.userId);
+      expect(first.file.id).toBe(100);
+      expect(first.readState).toMatchObject({ status: null, pageNumber: 1, percentage: 33, lastReadAt: readAt });
+      expect(second.readState).toMatchObject({ status: 'read', statusSource: 'auto', finishedAt: readAt, pageNumber: null, percentage: null });
     });
   });
 

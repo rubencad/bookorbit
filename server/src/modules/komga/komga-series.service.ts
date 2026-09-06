@@ -53,6 +53,7 @@ export class KomgaSeriesService {
         publishers: query.publisher,
         languages: query.language,
         authors: query.author,
+        readStatuses: query.read_status,
         oneshot: query.oneshot,
       },
       page,
@@ -91,7 +92,12 @@ export class KomgaSeriesService {
 
     const scope = await this.libraryService.resolveScope(user, account);
     const series = await this.requireSeries(scope, seriesId);
-    const { bookIds, total } = await this.repository.listSeriesBooks(scope, series.key, { mediaStatuses: query.media_status, tags: query.tag }, page);
+    const { bookIds, total } = await this.repository.listSeriesBooks(
+      scope,
+      series.key,
+      { mediaStatuses: query.media_status, readStatuses: query.read_status, tags: query.tag },
+      page,
+    );
     if (page.unpaged && total > KOMGA_UNPAGED_MAX_ROWS) {
       this.logger.warn(
         `[komga.series_books] [end] seriesId=${seriesId} userId=${user.id} total=${total} cap=${KOMGA_UNPAGED_MAX_ROWS} - unpaged series books truncated to the cap`,
