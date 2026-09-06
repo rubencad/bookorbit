@@ -1119,6 +1119,221 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     });
   });
 
+  describe('search and lists', () => {
+    const seriesAKey = () => `${comicLibrary.libraryId}-s${seriesAId}`;
+    const seriesBKey = () => `${comicLibrary.libraryId}-s${seriesBId}`;
+
+    async function searchSeries(credentials: Credentials, body: Record<string, unknown>, query = '') {
+      const response = await komgaSend('POST', `/komga/api/v1/series/list${query}`, credentials, body);
+      expect(response.statusCode).toBe(200);
+      return response.json() as KomgaPageBody<SeriesBody>;
+    }
+
+    async function searchBooks(credentials: Credentials, body: Record<string, unknown>, query = '') {
+      const response = await komgaSend('POST', `/komga/api/v1/books/list${query}`, credentials, body);
+      expect(response.statusCode).toBe(200);
+      return response.json() as KomgaPageBody<BookBody>;
+    }
+
+    const seriesNames = (page: KomgaPageBody<SeriesBody>) => page.content.map((series) => series.name);
+    const bookNames = (page: KomgaPageBody<BookBody>) => page.content.map((book) => book.name);
+
+    it('lists series through the condition tree with full text search, paging and sorting', async () => {
+      expect(seriesNames(await searchSeries(grouped, {}))).toEqual([seriesAName, seriesBName, 'Unknown Series']);
+
+      const libraryId = String(comicLibrary.libraryId);
+      const byTag = await searchSeries(grouped, {
+        condition: { allOf: [{ libraryId: { operator: 'is', value: libraryId } }, { tag: { operator: 'is', value: matureTag.toUpperCase() } }] },
+      });
+      expect(seriesNames(byTag)).toEqual([seriesAName]);
+
+      const either = await searchSeries(
+        grouped,
+        {
+          condition: { anyOf: [{ title: { operator: 'contains', value: 'series b' } }, { titleSort: { operator: 'beginsWith', value: 'unknown' } }] },
+        },
+        '?sort=metadata.titleSort,desc',
+      );
+      expect(seriesNames(either)).toEqual(['Unknown Series', seriesBName]);
+
+      const fullText = await searchSeries(grouped, { fullTextSearch: seriesAName.slice(0, 8).toUpperCase() });
+      expect(seriesNames(fullText)).toEqual([seriesAName]);
+
+      const paged = await searchSeries(grouped, {}, '?page=1&size=1');
+      expect(paged).toMatchObject({ totalElements: 3, totalPages: 3, number: 1, size: 1, first: false, last: false });
+      expect(seriesNames(paged)).toEqual([seriesBName]);
+
+      expect(seriesNames(await searchSeries(flat, { condition: { oneShot: { operator: 'isTrue' } } }))).toEqual(['Manual', 'Novel', 'Standalone']);
+      expect(seriesNames(await searchSeries(flat, { condition: { oneShot: { operator: 'isFalse' } } }))).toEqual([seriesAName, seriesBName]);
+      expect(
+        seriesNames(
+          await searchSeries(grouped, { condition: { author: { operator: 'is', value: { name: writerName.toLowerCase(), role: 'writer' } } } }),
+        ),
+      ).toEqual([seriesAName]);
+      expect(seriesNames(await searchSeries(grouped, { condition: { author: { operator: 'is', value: { role: 'penciller' } } } }))).toEqual([]);
+      expect(seriesNames(await searchSeries(grouped, { condition: { tag: { operator: 'isNotNull' } } }))).toEqual([seriesAName]);
+      expect(seriesNames(await searchSeries(grouped, { condition: { tag: { operator: 'isNull' } } }))).toEqual([seriesBName, 'Unknown Series']);
+      expect(seriesNames(await searchSeries(grouped, { condition: { genre: { operator: 'isNull' } } }))).toHaveLength(3);
+      expect(seriesNames(await searchSeries(grouped, { condition: { publisher: { operator: 'is', value: 'Image' } } }))).toEqual([]);
+      expect(seriesNames(await searchSeries(grouped, { condition: { language: { operator: 'isNot', value: 'fr' } } }))).toHaveLength(3);
+      expect(seriesNames(await searchSeries(grouped, { condition: { complete: { operator: 'isTrue' } } }))).toEqual([]);
+      expect(seriesNames(await searchSeries(grouped, { condition: { seriesStatus: { operator: 'is', value: 'ONGOING' } } }))).toHaveLength(3);
+      expect(seriesNames(await searchSeries(grouped, { condition: { releaseDate: { operator: 'isNull' } } }))).toHaveLength(3);
+      expect(seriesNames(await searchSeries(grouped, { condition: { readStatus: { operator: 'is', value: 'UNREAD' } } }))).toHaveLength(3);
+      expect(seriesNames(await searchSeries(grouped, { condition: { deleted: { operator: 'isTrue' } } }))).toEqual([]);
+      expect(
+        seriesNames(await searchSeries(grouped, { condition: { libraryId: { operator: 'is', value: String(hiddenLibrary.libraryId) } } })),
+      ).toEqual([]);
+      expect(seriesNames(await searchSeries(peerCredentials, {}))).toEqual([]);
+    });
+
+    it('lists books through the condition tree in the context of a required series', async () => {
+      const inSeriesA = await searchBooks(grouped, { condition: { seriesId: { operator: 'is', value: seriesAKey() } } });
+      expect(bookNames(inSeriesA)).toEqual(['Alpha Loose', 'Alpha One', 'Alpha Two', 'Crossover']);
+      for (const book of inSeriesA.content) expect(book.seriesId).toBe(seriesAKey());
+      expect(inSeriesA.content.find((book) => book.name === 'Crossover')?.metadata).toMatchObject({ number: '3', numberSort: 3 });
+
+      const inSeriesB = await searchBooks(grouped, { condition: { seriesId: { operator: 'is', value: seriesBKey() } } });
+      expect(inSeriesB.content).toEqual([
+        expect.objectContaining({ name: 'Crossover', seriesId: seriesBKey(), metadata: expect.objectContaining({ number: '1' }) }),
+      ]);
+
+      const unknownBucket = await searchBooks(grouped, { condition: { seriesId: { operator: 'is', value: `${comicLibrary.libraryId}-u` } } });
+      expect(unknownBucket.content).toEqual([expect.objectContaining({ name: 'Standalone', seriesTitle: 'Unknown Series' })]);
+      const oneshot = await searchBooks(flat, {
+        condition: { seriesId: { operator: 'is', value: `${comicLibrary.libraryId}-b${standalone.bookId}` } },
+      });
+      expect(oneshot.content).toEqual([expect.objectContaining({ name: 'Standalone', oneshot: true })]);
+      expect(bookNames(await searchBooks(grouped, { condition: { seriesId: { operator: 'isNot', value: seriesAKey() } } }))).toEqual(['Standalone']);
+
+      expect(bookNames(await searchBooks(grouped, { condition: { title: { operator: 'beginsWith', value: 'alpha' } } }))).toEqual([
+        'Alpha Loose',
+        'Alpha One',
+        'Alpha Two',
+      ]);
+      expect(bookNames(await searchBooks(grouped, { condition: { title: { operator: 'doesNotContain', value: 'alpha' } } }))).toEqual([
+        'Crossover',
+        'Standalone',
+      ]);
+      expect(bookNames(await searchBooks(grouped, { condition: { tag: { operator: 'is', value: matureTag } } }))).toEqual(['Alpha Two']);
+      expect(bookNames(await searchBooks(grouped, { condition: { tag: { operator: 'isNull' } } }))).toEqual([
+        'Alpha Loose',
+        'Alpha One',
+        'Crossover',
+        'Standalone',
+      ]);
+      expect(bookNames(await searchBooks(grouped, { condition: { author: { operator: 'is', value: { name: writerName } } } }))).toEqual([
+        'Alpha One',
+      ]);
+      expect(bookNames(await searchBooks(grouped, { condition: { author: { operator: 'isNot', value: { name: writerName } } } }))).toHaveLength(4);
+      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'isNull' } } }))).toHaveLength(5);
+      expect(bookNames(await searchBooks(grouped, { condition: { releaseDate: { operator: 'after', dateTime: '2000-01-01T00:00:00Z' } } }))).toEqual(
+        [],
+      );
+
+      expect(bookNames(await searchBooks(flat, { condition: { mediaProfile: { operator: 'is', value: 'PDF' } } }))).toEqual(['Manual']);
+      expect(bookNames(await searchBooks(flat, { condition: { mediaProfile: { operator: 'is', value: 'EPUB' } } }))).toEqual(['Novel']);
+      expect(bookNames(await searchBooks(flat, { condition: { mediaStatus: { operator: 'is', value: 'UNSUPPORTED' } } }))).toEqual(['Manual']);
+      expect(bookNames(await searchBooks(flat, { condition: { mediaStatus: { operator: 'isNot', value: 'READY' } } }))).toEqual(['Manual']);
+      expect(bookNames(await searchBooks(flat, { condition: { oneShot: { operator: 'isTrue' } } }))).toEqual(['Manual', 'Novel', 'Standalone']);
+      expect(bookNames(await searchBooks(grouped, { condition: { mediaProfile: { operator: 'is', value: 'PDF' } } }))).toEqual([]);
+      expect(bookNames(await searchBooks(grouped, { condition: { mediaStatus: { operator: 'is', value: 'ERROR' } } }))).toEqual([]);
+      expect(bookNames(await searchBooks(grouped, { condition: { oneShot: { operator: 'isTrue' } } }))).toEqual([]);
+      expect(bookNames(await searchBooks(grouped, { condition: { libraryId: { operator: 'is', value: String(hiddenLibrary.libraryId) } } }))).toEqual(
+        [],
+      );
+
+      expect(bookNames(await searchBooks(grouped, { fullTextSearch: 'crossover' }))).toEqual(['Crossover']);
+      expect(bookNames(await searchBooks(grouped, { fullTextSearch: writerName.split(' ')[0] }))).toEqual(['Alpha One']);
+
+      const paged = await searchBooks(grouped, {}, '?page=1&size=2&sort=createdDate,asc');
+      expect(paged).toMatchObject({ totalElements: 5, totalPages: 3, number: 1, size: 2, numberOfElements: 2 });
+    });
+
+    it("filters and sorts search results by the caller's read state", async () => {
+      expect((await komgaSend('PATCH', `/komga/api/v1/books/${alphaOne.bookId}/read-progress`, grouped, { page: 1 })).statusCode).toBe(204);
+      try {
+        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual(['Alpha One']);
+        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'isNot', value: 'UNREAD' } } }))).toEqual(['Alpha One']);
+        expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'UNREAD' } } }))).toHaveLength(4);
+        expect(bookNames(await searchBooks(grouped, {}, '?sort=readProgress.readDate,desc'))[0]).toBe('Alpha One');
+        expect(seriesNames(await searchSeries(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual([
+          seriesAName,
+        ]);
+        expect(seriesNames(await searchSeries(grouped, { condition: { readStatus: { operator: 'isNot', value: 'IN_PROGRESS' } } }))).toEqual([
+          seriesBName,
+          'Unknown Series',
+        ]);
+        expect(bookNames(await searchBooks(filteredCredentials, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual(
+          [],
+        );
+        expect(bookNames(await searchBooks(flat, { condition: { readStatus: { operator: 'is', value: 'READ' } } }))).toEqual(['Manual']);
+        expect(seriesNames(await searchSeries(flat, { condition: { readStatus: { operator: 'is', value: 'READ' } } }))).toEqual(['Manual']);
+      } finally {
+        expect((await komgaSend('DELETE', `/komga/api/v1/books/${alphaOne.bookId}/read-progress`, grouped)).statusCode).toBe(204);
+      }
+      expect(bookNames(await searchBooks(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual([]);
+    });
+
+    it('hides filtered books from search results', async () => {
+      expect(bookNames(await searchBooks(filteredCredentials, { condition: { tag: { operator: 'is', value: matureTag } } }))).toEqual([]);
+      expect(seriesNames(await searchSeries(filteredCredentials, { condition: { tag: { operator: 'is', value: matureTag } } }))).toEqual([]);
+      expect(bookNames(await searchBooks(filteredCredentials, {}))).not.toContain('Alpha Two');
+      const series = await searchSeries(filteredCredentials, { condition: { seriesId: undefined, title: { operator: 'is', value: seriesAName } } });
+      expect(series.content).toEqual([expect.objectContaining({ name: seriesAName, booksCount: 3 })]);
+    });
+
+    it('answers 400 for unsupported or malformed conditions', async () => {
+      const seriesBodies: Array<[Record<string, unknown>, RegExp]> = [
+        [{ condition: { poster: { operator: 'is', value: {} } } }, /Unknown search condition: poster/],
+        [{ condition: { tag: { operator: 'contains', value: 'x' } } }, /condition\.tag/],
+        [{ condition: { allOf: 'x' } }, /expected an array/],
+        [{ condition: { tag: { operator: 'is', value: 'a' }, genre: { operator: 'is', value: 'b' } } }, /exactly one condition/],
+        [{ condition: { readStatus: { operator: 'is', value: 'SKIMMED' } } }, /readStatus/],
+        [{ fullTextSearch: ['x'] }, /fullTextSearch/],
+      ];
+      for (const [body, message] of seriesBodies) {
+        const response = await komgaSend('POST', '/komga/api/v1/series/list', grouped, body);
+        expect(response.statusCode).toBe(400);
+        expect(String(response.json().message)).toMatch(message);
+      }
+      for (const leaf of ['numberSort', 'poster', 'readListId']) {
+        const response = await komgaSend('POST', '/komga/api/v1/books/list', grouped, { condition: { [leaf]: { operator: 'is', value: '1' } } });
+        expect(response.statusCode).toBe(400);
+        expect(String(response.json().message)).toBe(`Unsupported search condition: ${leaf}`);
+      }
+      expect((await komgaSend('POST', '/komga/api/v1/books/list?size=0', grouped, {})).statusCode).toBe(400);
+      expect((await komgaSend('POST', '/komga/api/v1/series/list', { username: grouped.username, password: 'nope' }, {})).statusCode).toBe(401);
+    });
+
+    it('walks to the next and previous book within the series a book belongs to', async () => {
+      const next = await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}/next`, grouped);
+      expect(next.statusCode).toBe(200);
+      expect(next.json()).toMatchObject({ id: String(alphaTwo.bookId), seriesId: seriesAKey(), metadata: { number: '2' } });
+
+      const previous = await komgaGet(`/komga/api/v1/books/${alphaTwo.bookId}/previous`, grouped);
+      expect(previous.json()).toMatchObject({ id: String(alphaOne.bookId), seriesId: seriesAKey() });
+
+      const crossoverInA = await komgaGet(`/komga/api/v1/books/${alphaTwo.bookId}/next`, grouped);
+      expect(crossoverInA.json()).toMatchObject({ id: String(crossover.bookId), seriesId: seriesAKey(), metadata: { number: '3', numberSort: 3 } });
+      const loose = await komgaGet(`/komga/api/v1/books/${crossover.bookId}/next`, grouped);
+      expect(loose.statusCode).toBe(404);
+
+      expect((await komgaGet(`/komga/api/v1/books/${alphaLoose.bookId}/next`, grouped)).statusCode).toBe(404);
+      expect((await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}/previous`, grouped)).statusCode).toBe(404);
+      expect((await komgaGet(`/komga/api/v1/books/${crossover.bookId}/previous`, grouped)).statusCode).toBe(404);
+      expect((await komgaGet(`/komga/api/v1/books/${standalone.bookId}/next`, grouped)).statusCode).toBe(404);
+      expect((await komgaGet(`/komga/api/v1/books/${standalone.bookId}/next`, flat)).statusCode).toBe(404);
+      expect((await komgaGet(`/komga/api/v1/books/${hiddenComic.bookId}/next`, grouped)).statusCode).toBe(404);
+      expect((await komgaGet(`/komga/api/v1/books/${alphaTwo.bookId}/next`, filteredCredentials)).statusCode).toBe(404);
+      expect((await komgaGet('/komga/api/v1/books/abc/next', grouped)).statusCode).toBe(400);
+
+      const skipsHidden = await komgaGet(`/komga/api/v1/books/${alphaOne.bookId}/next`, filteredCredentials);
+      expect(skipsHidden.statusCode).toBe(200);
+      expect(skipsHidden.json()).toMatchObject({ id: String(crossover.bookId), seriesId: seriesAKey() });
+    });
+  });
+
   async function komgaGet(url: string, credentials?: Credentials) {
     return ctx.app.inject({
       method: 'GET',

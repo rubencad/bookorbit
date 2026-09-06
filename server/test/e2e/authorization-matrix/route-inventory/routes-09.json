@@ -192,6 +192,18 @@
     "useGuards": ["KomgaEnabledGuard, KomgaAuthGuard"]
   },
   {
+    "file": "server/src/modules/komga/komga-series.controller.ts",
+    "className": "KomgaSeriesController",
+    "methodName": "search",
+    "httpMethod": "POST",
+    "path": "/komga/api/v1/series/list",
+    "permissions": [],
+    "libraryAccess": [],
+    "isPublic": true,
+    "allowDefault": false,
+    "useGuards": ["KomgaEnabledGuard, KomgaAuthGuard"]
+  },
+  {
     "file": "server/src/modules/komga/komga-book.controller.ts",
     "className": "KomgaBookController",
     "methodName": "list",
@@ -281,6 +293,42 @@
     "methodName": "onDeck",
     "httpMethod": "GET",
     "path": "/komga/api/v1/books/ondeck",
+    "permissions": [],
+    "libraryAccess": [],
+    "isPublic": true,
+    "allowDefault": false,
+    "useGuards": ["KomgaEnabledGuard, KomgaAuthGuard"]
+  },
+  {
+    "file": "server/src/modules/komga/komga-book.controller.ts",
+    "className": "KomgaBookController",
+    "methodName": "search",
+    "httpMethod": "POST",
+    "path": "/komga/api/v1/books/list",
+    "permissions": [],
+    "libraryAccess": [],
+    "isPublic": true,
+    "allowDefault": false,
+    "useGuards": ["KomgaEnabledGuard, KomgaAuthGuard"]
+  },
+  {
+    "file": "server/src/modules/komga/komga-book.controller.ts",
+    "className": "KomgaBookController",
+    "methodName": "next",
+    "httpMethod": "GET",
+    "path": "/komga/api/v1/books/:bookId/next",
+    "permissions": [],
+    "libraryAccess": [],
+    "isPublic": true,
+    "allowDefault": false,
+    "useGuards": ["KomgaEnabledGuard, KomgaAuthGuard"]
+  },
+  {
+    "file": "server/src/modules/komga/komga-book.controller.ts",
+    "className": "KomgaBookController",
+    "methodName": "previous",
+    "httpMethod": "GET",
+    "path": "/komga/api/v1/books/:bookId/previous",
     "permissions": [],
     "libraryAccess": [],
     "isPublic": true,
