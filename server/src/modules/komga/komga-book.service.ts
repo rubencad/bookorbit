@@ -143,8 +143,13 @@ export class KomgaBookService {
       sortableProperties: KOMGA_BOOK_SORT_PROPERTIES,
     });
     const scope = restrictScopeToCondition(await this.libraryService.resolveScope(user, account), search.condition);
-    const { bookIds, total } = await this.repository.listBooks(scope, { search: search.fullTextSearch, condition: search.condition }, page);
-    const records = await this.buildRecords(scope, bookIds, requiredSeriesKey(search.condition));
+    const filters = { search: search.fullTextSearch, condition: search.condition };
+    // Use the series query to apply membership ordering before pagination.
+    const context = requiredSeriesKey(search.condition);
+    const { bookIds, total } = context
+      ? await this.repository.listSeriesBooks(scope, context, filters, page)
+      : await this.repository.listBooks(scope, filters, page);
+    const records = await this.buildRecords(scope, bookIds, context);
     return buildKomgaPage(records.map(toKomgaBookDto), page, total);
   }
 

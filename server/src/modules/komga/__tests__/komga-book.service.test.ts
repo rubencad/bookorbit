@@ -77,6 +77,7 @@ function makeService(hydrated: KomgaBookHydration, numbering = new Map()) {
     resolveSeriesNumbering: vi.fn().mockResolvedValue(numbering),
     findVisibleBookId: vi.fn().mockResolvedValue(10),
     listBooks: vi.fn().mockResolvedValue({ bookIds: [10], total: 1 }),
+    listSeriesBooks: vi.fn().mockResolvedValue({ bookIds: [10], total: 1 }),
     listOnDeck: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
     findSeriesNeighbours: vi.fn().mockResolvedValue({ previousId: null, nextId: null }),
   };
@@ -319,14 +320,16 @@ describe('KomgaBookService', () => {
         fullTextSearch: 'alpha',
       });
 
-      const page = await service.search(USER, ACCOUNT, search, { page: 1, size: 10, sort: ['readProgress.readDate,desc'] });
+      const page = await service.search(USER, ACCOUNT, search, { page: 1, size: 10, sort: ['metadata.numberSort,asc'] });
 
       expect(libraryService.resolveScope).toHaveBeenCalledWith(USER, ACCOUNT);
-      expect(repository.listBooks).toHaveBeenCalledWith(
+      expect(repository.listSeriesBooks).toHaveBeenCalledWith(
         SCOPE,
+        { kind: 'series', libraryId: 2, seriesId: 9 },
         { search: 'alpha', condition: search.condition },
-        expect.objectContaining({ page: 1, size: 10, offset: 10, sort: [{ property: 'readProgress.readDate', direction: 'desc' }] }),
+        expect.objectContaining({ page: 1, size: 10, offset: 10, sort: [{ property: 'metadata.numberSort', direction: 'asc' }] }),
       );
+      expect(repository.listBooks).not.toHaveBeenCalled();
       expect(page.totalElements).toBe(1);
       expect(page.content[0]).toMatchObject({
         id: '10',
@@ -335,8 +338,14 @@ describe('KomgaBookService', () => {
         metadata: expect.objectContaining({ numberSort: 4 }),
       });
 
-      const direct = await service.search(USER, ACCOUNT, parseKomgaBookSearch({ condition: { libraryId: { operator: 'is', value: '2' } } }), {});
-      expect(repository.listBooks).toHaveBeenLastCalledWith(expect.objectContaining({ libraryIds: [2] }), expect.anything(), expect.anything());
+      const direct = await service.search(USER, ACCOUNT, parseKomgaBookSearch({ condition: { libraryId: { operator: 'is', value: '2' } } }), {
+        sort: ['readProgress.readDate,desc'],
+      });
+      expect(repository.listBooks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ libraryIds: [2] }),
+        expect.anything(),
+        expect.objectContaining({ sort: [{ property: 'readProgress.readDate', direction: 'desc' }] }),
+      );
       expect(direct.content[0]).toMatchObject({ seriesId: '2-s8', seriesTitle: 'Primary' });
 
       await service.search(USER, ACCOUNT, parseKomgaBookSearch({ condition: { libraryId: { operator: 'is', value: '7' } } }), {});

@@ -1188,10 +1188,27 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
     });
 
     it('lists books through the condition tree in the context of a required series', async () => {
-      const inSeriesA = await searchBooks(grouped, { condition: { seriesId: { operator: 'is', value: seriesAKey() } } });
+      const bySeriesA = { condition: { seriesId: { operator: 'is', value: seriesAKey() } } };
+      const inSeriesA = await searchBooks(grouped, bySeriesA);
       expect(bookNames(inSeriesA)).toEqual(['Alpha Loose', 'Alpha One', 'Alpha Two', 'Crossover']);
       for (const book of inSeriesA.content) expect(book.seriesId).toBe(seriesAKey());
       expect(inSeriesA.content.find((book) => book.name === 'Crossover')?.metadata).toMatchObject({ number: '3', numberSort: 3 });
+
+      expect(bookNames(await searchBooks(grouped, bySeriesA, '?sort=metadata.numberSort,asc'))).toEqual([
+        'Alpha One',
+        'Alpha Two',
+        'Crossover',
+        'Alpha Loose',
+      ]);
+      expect(bookNames(await searchBooks(grouped, bySeriesA, '?sort=metadata.numberSort,desc'))).toEqual([
+        'Crossover',
+        'Alpha Two',
+        'Alpha One',
+        'Alpha Loose',
+      ]);
+      const secondChapterPage = await searchBooks(grouped, bySeriesA, '?sort=metadata.numberSort,asc&size=2&page=1');
+      expect(bookNames(secondChapterPage)).toEqual(['Crossover', 'Alpha Loose']);
+      expect(secondChapterPage).toMatchObject({ totalElements: 4, totalPages: 2, last: true });
 
       const inSeriesB = await searchBooks(grouped, { condition: { seriesId: { operator: 'is', value: seriesBKey() } } });
       expect(inSeriesB.content).toEqual([
