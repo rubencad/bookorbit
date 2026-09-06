@@ -356,10 +356,33 @@ describe('OpdsBookService', () => {
         [1, { id: 12, format: 'cbz', pageCount: 24, pageMediaType: 'image/png' }, { pageNumber: 5, lastReadAt }],
         [2, null, null],
       ]);
-      expect(db.select).toHaveBeenCalledTimes(4);
+      expect(db.select).toHaveBeenCalledTimes(5);
       const progressChain = (db.select as ReturnType<typeof vi.fn>).mock.results[3]!.value as Record<string, ReturnType<typeof vi.fn>>;
       expect(collectValues(progressChain.where.mock.calls[0]?.[0])).toEqual(expect.arrayContaining([7, 12]));
+      const resetChain = (db.select as ReturnType<typeof vi.fn>).mock.results[4]!.value as Record<string, ReturnType<typeof vi.fn>>;
+      expect(collectValues(resetChain.where.mock.calls[0]?.[0])).toEqual(expect.arrayContaining([7, 12]));
       expect(comicPageService.queuePageCount).not.toHaveBeenCalled();
+    });
+
+    it('uses the reset marker as the content version once the progress row is gone', async () => {
+      const fileRows = [
+        {
+          bookId: 1,
+          id: 11,
+          format: 'cbz',
+          role: 'content',
+          pageCount: 24,
+          pageMediaType: 'image/jpeg',
+          absolutePath: '/books/comic-1/a.cbz',
+          updatedAt: new Date('2026-04-01'),
+        },
+      ];
+      const resetAt = new Date('2026-07-01T00:00:00Z');
+      const { service } = makeService([[metaRow(1)], [], fileRows, [], [{ bookFileId: 11, resetAt }]]);
+
+      const entries = (await testable(service).fetchBookEntries([1], { userId: 7 })) as { progress: unknown; contentUpdatedAt: Date }[];
+
+      expect(entries.map((entry) => [entry.progress, entry.contentUpdatedAt])).toEqual([[null, resetAt]]);
     });
 
     it('uses newer file and reading-progress timestamps as the content version', async () => {
@@ -401,7 +424,7 @@ describe('OpdsBookService', () => {
       ]);
     });
 
-    it('skips the progress query without a reader and when no entry has a comic file', async () => {
+    it('skips reader-state queries without a reader or comic file', async () => {
       const comicOnly = makeService([
         [metaRow(1)],
         [],

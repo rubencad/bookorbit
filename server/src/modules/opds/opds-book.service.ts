@@ -16,6 +16,7 @@ import {
   books,
   collections,
   collectionBooks,
+  koreaderProgressResets,
   smartScopes,
   libraries,
   readingProgress,
@@ -918,7 +919,10 @@ export class OpdsBookService {
       }
     }
 
-    const progressByFile = await this.fetchComicProgress([...comicFileByBook.values()], options.userId);
+    const [progressByFile, resetByFile] = await Promise.all([
+      this.fetchComicProgress([...comicFileByBook.values()], options.userId),
+      this.fetchProgressResets([...comicFileByBook.values()], options.userId),
+    ]);
     this.queueIncompletePageInfo([...comicFileByBook.values()]);
 
     const idOrder = new Map(bookIds.map((id, i) => [id, i]));
@@ -929,13 +933,14 @@ export class OpdsBookService {
         const contextSeries = contextSeriesByBook.get(row.id);
         const comicFile = comicFileByBook.get(row.id);
         const progress = comicFile ? (progressByFile.get(comicFile.id) ?? null) : null;
+        const resetAt = comicFile ? resetByFile.get(comicFile.id) : undefined;
         return {
           id: row.id,
           title: row.title ?? row.folderPath.split('/').pop() ?? 'Untitled',
           folderPath: row.folderPath,
           addedAt: row.addedAt,
           updatedAt: row.bookUpdatedAt,
-          contentUpdatedAt: latestDate(row.bookUpdatedAt, fileUpdatedByBook.get(row.id), progress?.lastReadAt),
+          contentUpdatedAt: latestDate(row.bookUpdatedAt, fileUpdatedByBook.get(row.id), progress?.lastReadAt, resetAt),
           description: row.description,
           seriesId: contextSeries?.seriesId ?? row.seriesId,
           seriesName: contextSeries?.seriesName ?? row.seriesName,
@@ -953,6 +958,27 @@ export class OpdsBookService {
         };
       })
       .sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
+  }
+
+  // Include the reset marker so deleting progress still advances the entry version and invalidates
+  // cached pse:lastRead values.
+  private async fetchProgressResets(comicFiles: ComicFileRow[], userId: number | undefined): Promise<Map<number, Date>> {
+    if (userId === undefined || comicFiles.length === 0) return new Map();
+
+    const rows = await this.db
+      .select({ bookFileId: koreaderProgressResets.bookFileId, resetAt: koreaderProgressResets.resetAt })
+      .from(koreaderProgressResets)
+      .where(
+        and(
+          eq(koreaderProgressResets.userId, userId),
+          inArray(
+            koreaderProgressResets.bookFileId,
+            comicFiles.map((file) => file.id),
+          ),
+        ),
+      );
+
+    return new Map(rows.map((row) => [row.bookFileId, row.resetAt]));
   }
 
   private async fetchComicProgress(comicFiles: ComicFileRow[], userId: number | undefined): Promise<Map<number, OpdsComicProgress>> {

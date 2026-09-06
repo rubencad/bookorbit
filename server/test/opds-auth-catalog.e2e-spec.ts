@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { mkdir, readFile, stat, writeFile } from 'fs/promises';
 import { dirname, join, relative } from 'path';
 
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Permission } from '@bookorbit/types';
 import { ConfigService } from '@nestjs/config';
 import sharp from 'sharp';
@@ -802,6 +802,58 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       expect(link).not.toContain('pse:lastRead');
     });
 
+    it('advances the entry timestamp when file progress is cleared', async () => {
+      // Make progress the current entry version so clearing it must advance the timestamp.
+      const past = new Date(Date.now() - 60 * 60_000);
+      const readAt = new Date(Date.now() - 5 * 60_000);
+      const [book] = await ctx.db.select({ updatedAt: schema.books.updatedAt }).from(schema.books).where(eq(schema.books.id, visibleComic.bookId));
+      const [file] = await ctx.db
+        .select({ updatedAt: schema.bookFiles.updatedAt })
+        .from(schema.bookFiles)
+        .where(eq(schema.bookFiles.id, visibleComic.bookFileId));
+
+      try {
+        await ctx.db.execute(sql`update books set updated_at = ${past} where id = ${visibleComic.bookId}`);
+        await ctx.db.execute(sql`update book_files set updated_at = ${past} where id = ${visibleComic.bookFileId}`);
+        await ctx.db.execute(
+          sql`update reading_progress set last_read_at = ${readAt} where book_file_id = ${visibleComic.bookFileId} and user_id = ${comicReader.userId}`,
+        );
+
+        const before = await opdsGet(comicCatalogPath(), comicReaderCredentials);
+        expect(streamLink(before.body, visibleComic.bookId)).toContain('pse:lastRead="2"');
+        expect(new Date(entryUpdated(before.body, visibleComic.bookId)).getTime()).toBe(readAt.getTime());
+
+        const cleared = await ctx.app.inject({
+          method: 'DELETE',
+          url: `/api/v1/books/files/${visibleComic.bookFileId}/progress`,
+          headers: authHeader(comicReader.accessToken),
+        });
+        expect(cleared.statusCode).toBe(204);
+
+        const after = await opdsGet(comicCatalogPath(), comicReaderCredentials);
+        expect(streamLink(after.body, visibleComic.bookId)).not.toContain('pse:lastRead');
+        expect(new Date(entryUpdated(after.body, visibleComic.bookId)).getTime()).toBeGreaterThan(readAt.getTime());
+      } finally {
+        await ctx.db.execute(sql`update books set updated_at = ${book.updatedAt} where id = ${visibleComic.bookId}`);
+        await ctx.db.execute(sql`update book_files set updated_at = ${file.updatedAt} where id = ${visibleComic.bookFileId}`);
+        await ctx.db
+          .delete(schema.readingProgress)
+          .where(and(eq(schema.readingProgress.bookFileId, visibleComic.bookFileId), eq(schema.readingProgress.userId, comicReader.userId)));
+        await ctx.db.insert(schema.readingProgress).values({
+          bookFileId: visibleComic.bookFileId,
+          userId: comicReader.userId,
+          percentage: 66.7,
+          pageNumber: 2,
+          lastReadAt: new Date('2026-02-03T04:05:06.789Z'),
+        });
+        await ctx.db
+          .delete(schema.koreaderProgressResets)
+          .where(
+            and(eq(schema.koreaderProgressResets.bookFileId, visibleComic.bookFileId), eq(schema.koreaderProgressResets.userId, comicReader.userId)),
+          );
+      }
+    });
+
     it('streams zero-based pages using the advertised media type', async () => {
       const first = await opdsGet(pagePath(0), comicReaderCredentials);
       expect(first.statusCode).toBe(200);
@@ -1020,6 +1072,13 @@ describe('OPDS auth and catalog (e2e)', { timeout: 120_000 }, () => {
       url: path,
       headers: credentials ? { authorization: basicAuth(credentials.username, credentials.password) } : undefined,
     });
+  }
+
+  function entryUpdated(feedXml: string, bookId: number): string {
+    const entry = feedXml.split('<entry>').find((block) => block.includes(`<id>urn:bookorbit:book:${bookId}</id>`));
+    const updated = entry?.match(/<updated>(.*?)<\/updated>/)?.[1];
+    if (!updated) throw new Error(`Expected an updated element for book ${bookId}`);
+    return updated;
   }
 
   function findStreamLink(feedXml: string, bookId: number): string | undefined {

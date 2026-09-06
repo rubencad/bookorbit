@@ -1,5 +1,6 @@
 import { PgDialect } from 'drizzle-orm/pg-core';
 
+import * as schema from '../../db/schema';
 import { ComicPageRepository } from './comic-page.repository';
 
 describe('ComicPageRepository', () => {
@@ -74,6 +75,7 @@ describe('ComicPageRepository', () => {
     expect(query.sql).toContain('("book_files"."page_count" is null or "book_files"."page_media_type" is null)');
     expect(query.params).toEqual([11, 'content', 'cbz', 'cbr', 'cb7', 'present']);
     expect(orderBy).toHaveBeenCalledTimes(1);
+    expect(orderBy).toHaveBeenCalledWith(schema.bookFiles.id);
     expect(limit).toHaveBeenCalledWith(200);
   });
 });
