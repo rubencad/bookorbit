@@ -133,12 +133,62 @@ shows as read everywhere.
 Progress is per user, not per account: two Komga accounts of the same user share it, and other
 users never see it.
 
+## Search
+
+Newer clients such as Komelia browse through Komga's search API instead of the older list
+endpoints: `POST /komga/api/v1/series/list` and `POST /komga/api/v1/books/list`, with the usual
+`page`, `size` and `sort` parameters in the query string and the search in the body:
+
+```json
+{
+  "condition": {
+    "allOf": [
+      { "libraryId": { "operator": "is", "value": "12" } },
+      {
+        "anyOf": [
+          { "tag": { "operator": "is", "value": "manga" } },
+          { "genre": { "operator": "is", "value": "Fantasy" } }
+        ]
+      },
+      { "readStatus": { "operator": "isNot", "value": "READ" } }
+    ]
+  },
+  "fullTextSearch": "saga"
+}
+```
+
+`allOf` and `anyOf` nest freely. Every other entry is one condition with an operator, exactly as
+Komga defines them, and the result is a normal Komga page. Mihon and its forks keep using the older
+`GET /series` and `GET /books` lists, which stay as they are.
+
+What the conditions mean against a BookOrbit library:
+
+- **Series**: `libraryId`, `title`, `titleSort`, `readStatus`, `oneShot`, `complete`, `seriesStatus`
+  (`ENDED` when the series has reached its expected book count, otherwise `ONGOING`), `deleted`,
+  `releaseDate` (the earliest published date of its books), and `tag`, `genre`, `publisher`,
+  `language` and `author`, which match when any book in the series has the value. `ageRating` and
+  `sharingLabel` behave as if every series had none; `collectionId` matches nothing.
+- **Books**: `libraryId`, `seriesId`, `title`, `readStatus`, `oneShot`, `deleted`, `releaseDate`,
+  `tag`, `author`, `mediaStatus` and `mediaProfile`. A `seriesId` condition that every result has to
+  satisfy also sets the series context, so the books carry that series and their number in it, as
+  they do under `/series/{id}/books`.
+- **`fullTextSearch`** is a plain accent-insensitive match on the series name, or on the book title
+  and its authors. Komga's query syntax (`title:foo`, quotes, wildcards) is matched literally.
+- **String operators** (`is`, `contains`, `beginsWith`, `endsWith` and their negations) ignore case
+  and accents. `before` and `after` compare dates; `isInTheLast` and `isNotInTheLast` take an ISO
+  8601 duration such as `P30D`.
+- **Unsupported**: `numberSort`, `poster` and `readListId` on books answer 400 with the name of the
+  condition. Everything else Komga defines is accepted.
+
+Books also answer `GET /komga/api/v1/books/{id}/next` and `/previous`, the neighbours in the same
+order as the series book list, within the series the book primarily belongs to. The last book of
+a series, and a one-shot, answer 404.
+
 ## Not available yet
 
-- **Search and list endpoints** used by newer clients (`POST /series/list`, `POST /books/list`) are
-  not implemented. Mihon and its forks use the older list endpoints, which are.
 - **Read lists and collections** answer with empty lists and are left out of the OPDS catalog.
-  Collections and smart scopes are planned to appear as Komga read lists.
+  Collections and smart scopes are planned to appear as Komga read lists; until then a search
+  condition on `readListId` answers 400 and one on `collectionId` matches nothing.
 - **Reading direction** is always left to right until the metadata field exists.
 - **PDF page streaming**: PDFs are listed as unsupported and can only be downloaded.
 - Server management endpoints (scans, metadata edits, users, settings) are deliberately not
