@@ -66,6 +66,7 @@ const BOOK: KomgaBookRecord = {
     lastReadAt: null,
     progressUpdatedAt: null,
     resetAt: null,
+    progressFileId: null,
   },
 };
 

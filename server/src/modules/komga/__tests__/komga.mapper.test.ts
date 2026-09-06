@@ -41,6 +41,7 @@ function readState(overrides: Partial<KomgaBookReadState> = {}): KomgaBookReadSt
     lastReadAt: null,
     progressUpdatedAt: null,
     resetAt: null,
+    progressFileId: null,
     ...overrides,
   };
 }
@@ -174,24 +175,43 @@ describe('komga mapper', () => {
   it('derives read progress from the progress row and the read status', () => {
     const readAt = new Date('2026-03-01T10:00:00.000Z');
     const modifiedAt = new Date('2026-03-01T10:00:01.000Z');
-    const inProgress = book({ readState: readState({ pageNumber: 12, percentage: 8, lastReadAt: readAt, progressUpdatedAt: modifiedAt }) });
+    const inProgress = book({
+      readState: readState({ progressFileId: 77, pageNumber: 12, percentage: 8, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
+    });
     expect(komgaReadProgressFor(inProgress)).toEqual({ page: 12, completed: false, readAt, modifiedAt });
 
     const finishedByPercentage = book({
-      readState: readState({ pageNumber: 142, percentage: 100, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
+      readState: readState({ progressFileId: 77, pageNumber: 142, percentage: 100, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
     });
     expect(komgaReadProgressFor(finishedByPercentage)?.completed).toBe(true);
 
     const finishedByStatus = book({
-      readState: readState({ status: 'read', pageNumber: 12, percentage: 8, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
+      readState: readState({ status: 'read', progressFileId: 77, pageNumber: 12, percentage: 8, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
     });
     expect(komgaReadProgressFor(finishedByStatus)).toEqual({ page: 12, completed: true, readAt, modifiedAt });
 
-    const estimated = book({ readState: readState({ pageNumber: null, percentage: 50, lastReadAt: readAt, progressUpdatedAt: modifiedAt }) });
+    const estimated = book({
+      readState: readState({ progressFileId: 77, pageNumber: null, percentage: 50, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
+    });
     expect(komgaReadProgressFor(estimated)?.page).toBe(71);
 
-    const beyondEnd = book({ readState: readState({ pageNumber: 900, percentage: 99, lastReadAt: readAt, progressUpdatedAt: modifiedAt }) });
+    const beyondEnd = book({
+      readState: readState({ progressFileId: 77, pageNumber: 900, percentage: 99, lastReadAt: readAt, progressUpdatedAt: modifiedAt }),
+    });
     expect(komgaReadProgressFor(beyondEnd)?.page).toBe(142);
+  });
+
+  it('carries progress made in another file of the book over by percentage', () => {
+    const readAt = new Date('2026-03-01T10:00:00.000Z');
+    const otherFile = book({
+      readState: readState({ progressFileId: 78, pageNumber: 50, percentage: 50, lastReadAt: readAt, progressUpdatedAt: readAt }),
+    });
+    expect(komgaReadProgressFor(otherFile)).toMatchObject({ page: 71, completed: false });
+
+    const otherFileFinished = book({
+      readState: readState({ progressFileId: 78, pageNumber: 3, percentage: 100, lastReadAt: readAt, progressUpdatedAt: readAt }),
+    });
+    expect(komgaReadProgressFor(otherFileFinished)).toMatchObject({ page: 142, completed: true });
   });
 
   it('reports a status-only read as completed on the last page and nothing for untouched books', () => {

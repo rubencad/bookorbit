@@ -204,7 +204,10 @@ export function komgaReadProgressFor(book: KomgaBookRecord): KomgaReadProgress |
   const statusRead = readState.status === 'read';
   if (readState.percentage !== null && readState.lastReadAt && readState.progressUpdatedAt) {
     const completed = statusRead || readState.percentage >= 100;
-    const storedPage = readState.pageNumber && readState.pageNumber > 0 ? readState.pageNumber : null;
+    // A page number only means something inside the archive it was read in; progress made in
+    // another file of the book is carried over by percentage.
+    const sameFile = readState.progressFileId === book.file.id;
+    const storedPage = sameFile && readState.pageNumber && readState.pageNumber > 0 ? readState.pageNumber : null;
     const estimatedPage = pagesCount > 0 ? Math.max(1, Math.round((readState.percentage / 100) * pagesCount)) : 0;
     const page = storedPage !== null ? (pagesCount > 0 ? Math.min(storedPage, pagesCount) : storedPage) : estimatedPage;
     return { page, completed, readAt: readState.lastReadAt, modifiedAt: readState.progressUpdatedAt };

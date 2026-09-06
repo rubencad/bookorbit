@@ -46,6 +46,7 @@ function bookRecord(overrides: Partial<KomgaBookRecord> = {}): KomgaBookRecord {
       lastReadAt: null,
       progressUpdatedAt: null,
       resetAt: null,
+      progressFileId: null,
     },
     ...overrides,
   };

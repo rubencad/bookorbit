@@ -75,6 +75,7 @@ export interface KomgaBookReadState {
   percentage: number | null;
   lastReadAt: Date | null;
   progressUpdatedAt: Date | null;
+  progressFileId: number | null;
   resetAt: Date | null;
 }
 

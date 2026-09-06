@@ -209,7 +209,7 @@ describe('KomgaBookService', () => {
 
       expect(repository.hydrateBooks).toHaveBeenCalledWith([10, 11], SCOPE.userId);
       expect(first.file.id).toBe(100);
-      expect(first.readState).toMatchObject({ status: null, pageNumber: 2, percentage: 66, lastReadAt: readAt, resetAt: null });
+      expect(first.readState).toMatchObject({ status: null, pageNumber: 2, percentage: 66, lastReadAt: readAt, progressFileId: 101, resetAt: null });
       expect(second.readState).toMatchObject({
         status: 'read',
         statusSource: 'auto',

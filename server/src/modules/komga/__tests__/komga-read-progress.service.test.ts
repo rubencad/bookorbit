@@ -23,6 +23,7 @@ function readState(overrides: Partial<KomgaBookReadState> = {}): KomgaBookReadSt
     lastReadAt: null,
     progressUpdatedAt: null,
     resetAt: null,
+    progressFileId: null,
     ...overrides,
   };
 }

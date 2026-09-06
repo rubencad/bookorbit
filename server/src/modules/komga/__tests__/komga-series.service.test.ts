@@ -28,6 +28,7 @@ const UNREAD = {
   lastReadAt: null,
   progressUpdatedAt: null,
   resetAt: null,
+  progressFileId: null,
 };
 const AGGREGATE = {
   lowestBookId: 10,

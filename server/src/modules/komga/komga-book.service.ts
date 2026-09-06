@@ -259,6 +259,7 @@ export class KomgaBookService {
       percentage: progress?.percentage ?? null,
       lastReadAt: progress?.lastReadAt ?? null,
       progressUpdatedAt: progress?.updatedAt ?? null,
+      progressFileId: progress?.bookFileId ?? null,
       resetAt: resetAt ?? null,
     };
   }
