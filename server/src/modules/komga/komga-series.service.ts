@@ -165,13 +165,13 @@ export class KomgaSeriesService {
     return { records, page, total, series };
   }
 
-  // Walks every member in numberSort order without the offset ceiling of the public listing, so bulk
-  // work reaches the whole of a library-sized unknown bucket. Returning false from visit stops early.
   async resolveSeries(user: RequestUser, account: KomgaRequestAccount, seriesId: string): Promise<KomgaSeriesHandle> {
     const scope = await this.libraryService.resolveScope(user, account);
     return { scope, series: await this.requireSeries(scope, seriesId) };
   }
 
+  // Walks every member in numberSort order without the offset ceiling of the public listing, so bulk
+  // work reaches the whole of a library-sized unknown bucket. Returning false from visit stops early.
   async forEachBookBatch(
     { scope, series }: KomgaSeriesHandle,
     batchSize: number,
