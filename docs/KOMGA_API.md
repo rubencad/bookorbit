@@ -5,8 +5,8 @@ can browse your libraries and read comics page by page without downloading whole
 and the Tachiyomi forks, Suwayomi, Komelia and Paperback all connect through their Komga source.
 Panels connects through the Komga OPDS feed the same API serves.
 
-The API is read-only: it serves what BookOrbit already knows about your books. Nothing a client
-does through it changes your library.
+The API serves what BookOrbit already knows about your books and takes read progress back from the
+client. Nothing else a client does through it changes your library.
 
 ## Enable the API
 
@@ -101,12 +101,37 @@ URL ending in OPDS, use `https://your-host/komga/opds`.
 If a client asks for a URL ending in `/api/v1`, use the address exactly as shown; the `/api/v1`
 part is added by the client.
 
+## Read progress
+
+Progress is shared with everything else in BookOrbit. A page turned in Mihon lands in the same
+place as a page turned in the web reader, on a Kobo or in KOReader, and a book finished anywhere
+shows as read everywhere.
+
+- **From the client to BookOrbit**: reading pages, marking a chapter or a whole series read or
+  unread, and the Mihon tracker all write through the Komga API. Each write updates the file's
+  reading position, the book's status (reading, read) following the library's thresholds, and the
+  reading log, where the attempt is attributed to `komga`.
+- **From BookOrbit to the client**: every book carries its `readProgress` (last page, completed,
+  when it was last read), series report how many books are read, in progress or unread, and the
+  `read_status` filter works on series and book lists. A book counts as completed when its BookOrbit
+  status is read or its stored progress is at 100 percent, so a book marked read by hand in
+  BookOrbit shows as read in Mihon as well.
+- **Panels** receives the last read page through the OPDS feed (`pse:lastRead`) and reopens a comic
+  where you left it. Its page turns reach BookOrbit through the Komga API.
+- **Marking unread** from a client removes the reading position and puts an automatically derived
+  status back to unread. A status you set by hand in BookOrbit is left alone.
+- **Tracker**: Mihon's Komga tracker reads the series counts and the last book of the unbroken run
+  of completed books, in `numberSort` order. An in-progress book ends the run. Moving the tracker
+  forward marks every book up to that number read; moving it back never marks anything unread.
+- **Home screen lists**: "on deck" offers the next unread book of every series where you have
+  finished something and have nothing in progress, most recently finished first. Latest books and
+  new, updated and latest series follow the book timestamps BookOrbit keeps.
+
+Progress is per user, not per account: two Komga accounts of the same user share it, and other
+users never see it.
+
 ## Not available yet
 
-- **Read progress** from Komga clients is not synced yet. Marking a chapter read in Mihon does not
-  reach BookOrbit, and progress made in the web reader is not shown to Komga clients. Every book
-  reports as unread, and the OPDS feed carries no `pse:lastRead`, so Panels reopens a comic at page
-  one and its page turns do not reach the server. This is the next Komga release.
 - **Search and list endpoints** used by newer clients (`POST /series/list`, `POST /books/list`) are
   not implemented. Mihon and its forks use the older list endpoints, which are.
 - **Read lists and collections** answer with empty lists and are left out of the OPDS catalog.
@@ -128,6 +153,13 @@ part is added by the client.
   library scan, fills the count in.
 - **Chapters are in the wrong order**: set series indexes on the books. Books without an index are
   appended after the numbered ones.
+- **A chapter marked unread in Mihon comes back as read**: its status was set by hand in BookOrbit.
+  Change it in the book's reading log instead.
+- **A finished book read again does not become read**: BookOrbit treats a second pass as a re-read
+  and waits for reading evidence before changing the status. Mark it read in Mihon or in BookOrbit
+  when you are done; the client shows it read either way.
+- **The tracker says 0 although chapters are read**: the run of read chapters starts at the first
+  unread or in-progress chapter. Finish or unmark it to move the tracker forward.
 - **Panels says it needs a URL ending in OPDS**: it could not reach the feed. Check that the Komga
   API is enabled and that a reverse proxy forwards `/komga` whole, then enter
   `https://your-host/komga/opds`.
