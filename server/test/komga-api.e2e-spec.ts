@@ -1226,6 +1226,28 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect(bookNames(secondChapterPage)).toEqual(['Crossover', 'Alpha Loose']);
       expect(secondChapterPage).toMatchObject({ totalElements: 4, totalPages: 2, last: true });
 
+      const searchedInA = await searchBooks(grouped, { ...bySeriesA, fullTextSearch: 'alpha' });
+      expect(bookNames(searchedInA)).toEqual(['Alpha Loose', 'Alpha One', 'Alpha Two']);
+      expect(searchedInA.totalElements).toBe(3);
+      expect(
+        bookNames(await searchBooks(grouped, { condition: { allOf: [bySeriesA.condition, { title: { operator: 'contains', value: 'two' } }] } })),
+      ).toEqual(['Alpha Two']);
+      expect(
+        bookNames(await searchBooks(grouped, { condition: { allOf: [bySeriesA.condition, { releaseDate: { operator: 'isNotNull' } }] } })),
+      ).toEqual(['Alpha One']);
+      expect(bookNames(await searchBooks(grouped, bySeriesA, '?sort=metadata.releaseDate,asc&sort=metadata.title,desc'))).toEqual([
+        'Alpha One',
+        'Crossover',
+        'Alpha Two',
+        'Alpha Loose',
+      ]);
+      expect(bookNames(await searchBooks(grouped, bySeriesA, '?sort=metadata.releaseDate,desc'))).toEqual([
+        'Alpha One',
+        'Alpha Loose',
+        'Alpha Two',
+        'Crossover',
+      ]);
+
       const inSeriesB = await searchBooks(grouped, { condition: { seriesId: { operator: 'is', value: seriesBKey() } } });
       expect(inSeriesB.content).toEqual([
         expect.objectContaining({ name: 'Crossover', seriesId: seriesBKey(), metadata: expect.objectContaining({ number: '1' }) }),
@@ -1316,6 +1338,14 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
         expect(byReadDate.content.slice(0, 2)).toEqual(dated);
         const readDates = dated.map((book) => book.readProgress!.readDate);
         expect(readDates).toEqual([...readDates].sort().reverse());
+
+        const seriesByReadDate = await searchBooks(
+          grouped,
+          { condition: { seriesId: { operator: 'is', value: seriesAKey() } } },
+          '?sort=readProgress.readDate,desc',
+        );
+        expect(seriesByReadDate.content.slice(0, 2)).toEqual(dated);
+        expect(seriesByReadDate.content.slice(2).every((book) => book.readProgress === null)).toBe(true);
         expect(seriesNames(await searchSeries(grouped, { condition: { readStatus: { operator: 'is', value: 'IN_PROGRESS' } } }))).toEqual([
           seriesAName,
         ]);

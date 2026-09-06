@@ -238,7 +238,7 @@ function joinSql(parts: SQL[], separator: SQL): SQL {
 }
 
 function bookSortSql(sort: KomgaSort, userId: number): SQL {
-  return sql`${(BOOK_SORT_COLUMNS[sort.property] ?? BOOK_SORT_COLUMNS.name)(userId)} ${direction(sort.direction)}`;
+  return sql`${(BOOK_SORT_COLUMNS[sort.property] ?? BOOK_SORT_COLUMNS.name)(userId)} ${direction(sort.direction)} NULLS LAST`;
 }
 
 function progressReadAtSql(userId: number): SQL {
@@ -423,7 +423,7 @@ export class KomgaCatalogRepository {
     page: KomgaPageRequest,
   ): Promise<{ bookIds: number[]; total: number }> {
     if (!scope.libraryIds.includes(key.libraryId)) return { bookIds: [], total: 0 };
-    const { where, orderBy } = this.seriesBooksQuery(scope, key, filters, page.sort[0]);
+    const { where, orderBy } = this.seriesBooksQuery(scope, key, filters, page.sort);
 
     const base = this.db.select({ id: books.id }).from(books).leftJoin(bookMetadata, eq(bookMetadata.bookId, books.id));
     const idQuery = (key.kind === 'series' ? base.innerJoin(bookSeriesMemberships, this.membershipJoin(key.seriesId)) : base)
@@ -431,7 +431,10 @@ export class KomgaCatalogRepository {
       .orderBy(...orderBy)
       .limit(page.size)
       .offset(page.offset);
-    const countBase = this.db.select({ total: sql<string>`count(*)::text` }).from(books);
+    const countBase = this.db
+      .select({ total: sql<string>`count(*)::text` })
+      .from(books)
+      .leftJoin(bookMetadata, eq(bookMetadata.bookId, books.id));
     const countQuery = (key.kind === 'series' ? countBase.innerJoin(bookSeriesMemberships, this.membershipJoin(key.seriesId)) : countBase).where(
       where,
     );
@@ -443,7 +446,7 @@ export class KomgaCatalogRepository {
   async findSeriesNeighbours(scope: KomgaScope, key: KomgaSeriesKey, bookId: number): Promise<KomgaSeriesNeighbours> {
     const none: KomgaSeriesNeighbours = { previousId: null, nextId: null };
     if (!scope.libraryIds.includes(key.libraryId) || key.kind === 'oneshot') return none;
-    const { where, orderBy } = this.seriesBooksQuery(scope, key, {}, undefined);
+    const { where, orderBy } = this.seriesBooksQuery(scope, key, {}, []);
     const order = joinSql(orderBy, sql`, `);
     const membership = key.kind === 'series' ? sql`INNER JOIN ${bookSeriesMemberships} ON ${this.membershipJoin(key.seriesId)}` : sql``;
     const result = await this.db.execute<{ previous_id: number | null; next_id: number | null }>(
@@ -460,7 +463,7 @@ export class KomgaCatalogRepository {
   async listBooks(scope: KomgaScope, filters: KomgaBookFilters, page: KomgaPageRequest): Promise<{ bookIds: number[]; total: number }> {
     if (scope.libraryIds.length === 0) return { bookIds: [], total: 0 };
     const where = and(...this.baseClauses(scope), ...this.bookFilterClauses(scope, filters))!;
-    const orderBy = [...page.sort.map((sort) => sql`${bookSortSql(sort, scope.userId)} NULLS LAST`), sql`${books.id} ASC`];
+    const orderBy = [...page.sort.map((sort) => bookSortSql(sort, scope.userId)), sql`${books.id} ASC`];
 
     const [idRows, countRows] = await Promise.all([
       this.db
@@ -885,22 +888,20 @@ export class KomgaCatalogRepository {
     return clauses;
   }
 
-  private seriesBooksQuery(
-    scope: KomgaScope,
-    key: KomgaSeriesKey,
-    filters: KomgaBookFilters,
-    sort: KomgaSort | undefined,
-  ): { where: SQL; orderBy: SQL[] } {
+  private seriesBooksQuery(scope: KomgaScope, key: KomgaSeriesKey, filters: KomgaBookFilters, sorts: KomgaSort[]): { where: SQL; orderBy: SQL[] } {
     const where = and(
       ...this.baseClauses({ ...scope, libraryIds: [key.libraryId] }),
       ...this.bookFilterClauses(scope, filters),
       ...this.seriesMemberClauses(key),
     )!;
     const orderBy: SQL[] = [];
-    if (key.kind === 'series' && (!sort || sort.property === 'metadata.numberSort')) {
-      orderBy.push(...seriesIndexOrderBy(bookSeriesMemberships.seriesIndex, sort?.direction === 'desc' ? 'DESC' : 'ASC'));
-    } else if (sort && sort.property !== 'metadata.numberSort') {
-      orderBy.push(bookSortSql(sort, scope.userId));
+    const requested: KomgaSort[] = sorts.length > 0 ? sorts : [{ property: 'metadata.numberSort', direction: 'asc' }];
+    for (const sort of requested) {
+      if (sort.property === 'metadata.numberSort') {
+        if (key.kind === 'series') orderBy.push(...seriesIndexOrderBy(bookSeriesMemberships.seriesIndex, sort.direction === 'desc' ? 'DESC' : 'ASC'));
+      } else {
+        orderBy.push(bookSortSql(sort, scope.userId));
+      }
     }
     orderBy.push(sql`lower(${bookMetadata.title}) ASC NULLS LAST`, sql`${books.id} ASC`);
     return { where, orderBy };
