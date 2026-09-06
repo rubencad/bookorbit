@@ -45,6 +45,7 @@ function bookRecord(overrides: Partial<KomgaBookRecord> = {}): KomgaBookRecord {
       percentage: null,
       lastReadAt: null,
       progressUpdatedAt: null,
+      resetAt: null,
     },
     ...overrides,
   };
@@ -121,17 +122,31 @@ describe('komgaOpdsBookEntry', () => {
     expect(entry).toContain('type="image/png"');
   });
 
-  it('advertises the last read page and dates the entry by that read', () => {
+  it('advertises the last read page and versions the entry by the progress modification', () => {
     const lastReadAt = new Date('2026-03-04T05:06:07.890Z');
+    const progressUpdatedAt = new Date('2026-03-05T00:00:00.000Z');
     const entry = komgaOpdsBookEntry(
       bookRecord({
-        readState: { ...bookRecord().readState, pageNumber: 30, percentage: 100, lastReadAt, progressUpdatedAt: lastReadAt },
+        readState: { ...bookRecord().readState, pageNumber: 30, percentage: 100, lastReadAt, progressUpdatedAt },
       }),
     );
 
     expect(entry).toContain('pse:lastRead="24"');
     expect(entry).toContain('pse:lastReadDate="2026-03-04T05:06:07Z"');
-    expect(entry).toContain('<updated>2026-03-04T05:06:07Z</updated>');
+    expect(entry).toContain('<updated>2026-03-05T00:00:00Z</updated>');
+  });
+
+  it('advances the entry when a status changes or progress is cleared', () => {
+    const statusUpdatedAt = new Date('2026-02-01T00:00:00.000Z');
+    const finishedAt = new Date('2025-06-01T00:00:00.000Z');
+    const statusOnly = komgaOpdsBookEntry(bookRecord({ readState: { ...bookRecord().readState, status: 'read', finishedAt, statusUpdatedAt } }));
+    expect(statusOnly).toContain('pse:lastRead="24"');
+    expect(statusOnly).toContain('pse:lastReadDate="2025-06-01T00:00:00Z"');
+    expect(statusOnly).toContain('<updated>2026-02-01T00:00:00Z</updated>');
+
+    const cleared = komgaOpdsBookEntry(bookRecord({ readState: { ...bookRecord().readState, resetAt: new Date('2026-04-01T00:00:00.000Z') } }));
+    expect(cleared).not.toContain('pse:lastRead');
+    expect(cleared).toContain('<updated>2026-04-01T00:00:00Z</updated>');
   });
 
   it('omits lastRead attributes for unread books', () => {

@@ -224,12 +224,12 @@ export class KomgaBookService {
         series,
         authors: this.authorsFor(hydration.authors.get(row.id) ?? [], hydration.credits.get(row.id)),
         tags: hydration.tags.get(row.id) ?? [],
-        readState: this.readStateFor(hydration.progress.get(file.id), hydration.statuses.get(row.id)),
+        readState: this.readStateFor(hydration.progress.get(row.id), hydration.statuses.get(row.id), hydration.resets.get(row.id)),
       };
     });
   }
 
-  private readStateFor(progress: KomgaProgressRow | undefined, status: KomgaStatusRow | undefined): KomgaBookReadState {
+  private readStateFor(progress: KomgaProgressRow | undefined, status: KomgaStatusRow | undefined, resetAt: Date | undefined): KomgaBookReadState {
     return {
       status: status?.status ?? null,
       statusSource: status?.source ?? null,
@@ -239,6 +239,7 @@ export class KomgaBookService {
       percentage: progress?.percentage ?? null,
       lastReadAt: progress?.lastReadAt ?? null,
       progressUpdatedAt: progress?.updatedAt ?? null,
+      resetAt: resetAt ?? null,
     };
   }
 

@@ -242,10 +242,9 @@ export class KomgaReadProgressService {
     );
   }
 
-  // Clearing the row alone leaves a read status in place, so the client would keep showing the book
-  // as read. Statuses the user set by hand in BookOrbit are left alone.
+  // Clear auto-derived status with progress, but keep statuses set manually in BookOrbit.
   private async clearProgress(user: RequestUser, record: KomgaBookRecord): Promise<void> {
-    await this.bookService.clearFileProgress(user.id, record.file.id, user);
+    await this.bookService.clearBookProgress(user.id, record.id, user);
     const { status, statusSource } = record.readState;
     if (status && status !== 'unread' && status !== 'want_to_read' && statusSource === 'auto') {
       await this.bookService.setReadStatus(record.id, { status: 'unread' }, user);

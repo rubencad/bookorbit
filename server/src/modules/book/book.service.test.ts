@@ -2570,6 +2570,25 @@ describe('BookService', () => {
     });
   });
 
+  describe('clearBookProgress', () => {
+    it('checks access and clears every file for direct and reread resets', async () => {
+      const { service, bookRepo } = makeService();
+      const user = makeUser({ id: 12 });
+      vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
+      bookRepo.clearBookProgress = vi.fn().mockResolvedValue(undefined);
+
+      await service.clearBookProgress(user.id, 77, user);
+      await service.clearBookProgressForReread(user.id, 78, user);
+
+      expect(service.verifyBookAccess).toHaveBeenNthCalledWith(1, 77, user);
+      expect(service.verifyBookAccess).toHaveBeenNthCalledWith(2, 78, user);
+      expect(bookRepo.clearBookProgress.mock.calls).toEqual([
+        [user.id, 77],
+        [user.id, 78],
+      ]);
+    });
+  });
+
   describe('saveAudioProgress', () => {
     it('writes audio progress when current file belongs to the target book', async () => {
       const { service, bookRepo, libraryService, userBookStatusService } = makeService();

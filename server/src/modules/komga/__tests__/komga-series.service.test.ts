@@ -27,6 +27,7 @@ const UNREAD = {
   percentage: null,
   lastReadAt: null,
   progressUpdatedAt: null,
+  resetAt: null,
 };
 const AGGREGATE = {
   lowestBookId: 10,

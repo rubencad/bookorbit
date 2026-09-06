@@ -118,8 +118,11 @@ shows as read everywhere.
   BookOrbit shows as read in Mihon as well.
 - **Panels** receives the last read page through the OPDS feed (`pse:lastRead`) and reopens a comic
   where you left it. Its page turns reach BookOrbit through the Komga API.
-- **Marking unread** from a client removes the reading position and puts an automatically derived
-  status back to unread. A status you set by hand in BookOrbit is left alone.
+- **Marking unread** from a client removes the reading position of every file of the book and puts
+  an automatically derived status back to unread. A status you set by hand in BookOrbit is left
+  alone.
+- **Books with several files** (a CBZ next to an EPUB, say) report the file you read most recently.
+  Komga clients write to the comic file.
 - **Tracker**: Mihon's Komga tracker reads the series counts and the last book of the unbroken run
   of completed books, in `numberSort` order. An in-progress book ends the run. Moving the tracker
   forward marks every book up to that number read; moving it back never marks anything unread.

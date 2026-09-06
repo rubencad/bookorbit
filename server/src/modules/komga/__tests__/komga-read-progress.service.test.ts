@@ -22,6 +22,7 @@ function readState(overrides: Partial<KomgaBookReadState> = {}): KomgaBookReadSt
     percentage: null,
     lastReadAt: null,
     progressUpdatedAt: null,
+    resetAt: null,
     ...overrides,
   };
 }
@@ -93,7 +94,7 @@ function makeService(records: KomgaBookRecord[] = []) {
   const bookService = {
     getProgress: vi.fn().mockResolvedValue(null),
     saveProgress: vi.fn().mockResolvedValue(undefined),
-    clearFileProgress: vi.fn().mockResolvedValue(undefined),
+    clearBookProgress: vi.fn().mockResolvedValue(undefined),
     setReadStatus: vi.fn().mockResolvedValue(undefined),
   };
   const comicPageService = { getManifest: vi.fn().mockResolvedValue({ pages: [{}, {}, {}, {}] }) };
@@ -205,11 +206,11 @@ describe('KomgaReadProgressService', () => {
   });
 
   describe('clearBook', () => {
-    it('clears the file progress and resets an automatic status to unread', async () => {
+    it('clears every file of the book and resets an automatic status to unread', async () => {
       const { service, bookService } = makeService([record(1, 1, finished)]);
       await service.clearBook(USER, ACCOUNT, 1);
 
-      expect(bookService.clearFileProgress).toHaveBeenCalledWith(USER.id, 10, USER);
+      expect(bookService.clearBookProgress).toHaveBeenCalledWith(USER.id, 1, USER);
       expect(bookService.setReadStatus).toHaveBeenCalledWith(1, { status: 'unread' }, USER);
     });
 
@@ -220,7 +221,7 @@ describe('KomgaReadProgressService', () => {
       await service.clearBook(USER, ACCOUNT, 1);
       await service.clearBook(USER, ACCOUNT, 2);
 
-      expect(bookService.clearFileProgress).toHaveBeenCalledTimes(2);
+      expect(bookService.clearBookProgress).toHaveBeenCalledTimes(2);
       expect(bookService.setReadStatus).not.toHaveBeenCalled();
     });
   });
@@ -245,7 +246,7 @@ describe('KomgaReadProgressService', () => {
       const { service, bookService } = makeService([record(1, 1, finished), record(2, 2, inProgress), record(3, 3)]);
       await service.clearSeries(USER, ACCOUNT, '2-s9');
 
-      expect(bookService.clearFileProgress.mock.calls.map((call) => call[1])).toEqual([10, 20]);
+      expect(bookService.clearBookProgress.mock.calls.map((call) => call[1])).toEqual([1, 2]);
       expect(bookService.setReadStatus).toHaveBeenCalledTimes(1);
       expect(bookService.setReadStatus).toHaveBeenCalledWith(1, { status: 'unread' }, USER);
     });
@@ -285,7 +286,7 @@ describe('KomgaReadProgressService', () => {
 
       expect(savedFileIds(bookService)).toEqual([20, 30]);
       expect(batches).toEqual([0, 2]);
-      expect(bookService.clearFileProgress).not.toHaveBeenCalled();
+      expect(bookService.clearBookProgress).not.toHaveBeenCalled();
 
       bookService.saveProgress.mockClear();
       await service.markReadUpToNumberSort(USER, ACCOUNT, '2-s9', 0.5);

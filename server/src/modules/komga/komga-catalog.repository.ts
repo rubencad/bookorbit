@@ -18,6 +18,7 @@ import {
   books,
   comicMetadata,
   genres,
+  koreaderProgressResets,
   libraries,
   readingProgress,
   tags,
@@ -122,6 +123,7 @@ export interface KomgaComicCreditsRow {
 }
 
 export interface KomgaProgressRow {
+  bookId: number;
   bookFileId: number;
   pageNumber: number | null;
   percentage: number;
@@ -146,6 +148,7 @@ export interface KomgaBookHydration {
   memberships: Map<number, KomgaMembershipRow[]>;
   progress: Map<number, KomgaProgressRow>;
   statuses: Map<number, KomgaStatusRow>;
+  resets: Map<number, Date>;
 }
 
 type SeriesSourceRow = {
@@ -458,10 +461,11 @@ export class KomgaCatalogRepository {
       memberships: new Map(),
       progress: new Map(),
       statuses: new Map(),
+      resets: new Map(),
     };
     if (bookIds.length === 0) return hydration;
 
-    const [bookRows, fileRows, authorRows, tagRows, creditRows, membershipRows, progressRows, statusRows] = await Promise.all([
+    const [bookRows, fileRows, authorRows, tagRows, creditRows, membershipRows, progressRows, statusRows, resetRows] = await Promise.all([
       this.db
         .select({
           id: books.id,
@@ -535,6 +539,7 @@ export class KomgaCatalogRepository {
         .orderBy(bookSeriesMemberships.displayOrder),
       this.db
         .select({
+          bookId: bookFiles.bookId,
           bookFileId: readingProgress.bookFileId,
           pageNumber: readingProgress.pageNumber,
           percentage: readingProgress.percentage,
@@ -543,7 +548,7 @@ export class KomgaCatalogRepository {
         })
         .from(readingProgress)
         .innerJoin(bookFiles, eq(bookFiles.id, readingProgress.bookFileId))
-        .where(and(inArray(bookFiles.bookId, bookIds), eq(readingProgress.userId, userId))),
+        .where(and(inArray(bookFiles.bookId, bookIds), eq(bookFiles.role, 'content'), eq(readingProgress.userId, userId))),
       this.db
         .select({
           bookId: userBookStatus.bookId,
@@ -554,6 +559,12 @@ export class KomgaCatalogRepository {
         })
         .from(userBookStatus)
         .where(and(inArray(userBookStatus.bookId, bookIds), eq(userBookStatus.userId, userId))),
+      this.db
+        .select({ bookId: bookFiles.bookId, resetAt: sql<Date>`max(${koreaderProgressResets.resetAt})` })
+        .from(koreaderProgressResets)
+        .innerJoin(bookFiles, eq(bookFiles.id, koreaderProgressResets.bookFileId))
+        .where(and(inArray(bookFiles.bookId, bookIds), eq(koreaderProgressResets.userId, userId)))
+        .groupBy(bookFiles.bookId),
     ]);
 
     hydration.books = bookRows;
@@ -579,8 +590,12 @@ export class KomgaCatalogRepository {
       list.push(row);
       hydration.memberships.set(row.bookId, list);
     }
-    for (const row of progressRows) hydration.progress.set(row.bookFileId, row);
+    for (const row of progressRows) {
+      const current = hydration.progress.get(row.bookId);
+      if (!current || row.lastReadAt > current.lastReadAt) hydration.progress.set(row.bookId, row);
+    }
     for (const row of statusRows) hydration.statuses.set(row.bookId, row);
+    for (const row of resetRows) hydration.resets.set(row.bookId, new Date(row.resetAt));
     return hydration;
   }
 
@@ -751,23 +766,21 @@ export class KomgaCatalogRepository {
     return sql`(SELECT max(coalesce(${userBookStatus.finishedAt}, ${userBookStatus.updatedAt})) FROM ${userBookStatus} WHERE ${userBookStatus.bookId} = ${books.id} AND ${userBookStatus.userId} = ${userId} AND ${userBookStatus.status} = 'read')`;
   }
 
+  // A book's progress is the most recently read of its content files, the same row the book DTO
+  // reports, so filters, counters and readProgress agree for books with several files.
   private readStateClauses(userId: number): { read: SQL; inProgress: SQL } {
-    const progressFor = (...extra: SQL[]) =>
-      exists(
-        this.db
-          .select({ one: sql`1` })
-          .from(readingProgress)
-          .innerJoin(bookFiles, eq(bookFiles.id, readingProgress.bookFileId))
-          .where(and(sql`${bookFiles.bookId} = ${books.id}`, eq(bookFiles.role, 'content'), eq(readingProgress.userId, userId), ...extra)),
-      );
+    const latestPercentage = sql`(SELECT ${readingProgress.percentage} FROM ${readingProgress}
+      INNER JOIN ${bookFiles} ON ${bookFiles.id} = ${readingProgress.bookFileId}
+      WHERE ${bookFiles.bookId} = ${books.id} AND ${bookFiles.role} = 'content' AND ${readingProgress.userId} = ${userId}
+      ORDER BY ${readingProgress.lastReadAt} DESC LIMIT 1)`;
     const statusRead = exists(
       this.db
         .select({ one: sql`1` })
         .from(userBookStatus)
         .where(and(sql`${userBookStatus.bookId} = ${books.id}`, eq(userBookStatus.userId, userId), eq(userBookStatus.status, 'read'))),
     );
-    const read = sql`(${statusRead} OR ${progressFor(sql`${readingProgress.percentage} >= 100`)})`;
-    return { read, inProgress: sql`(NOT ${read} AND ${progressFor()})` };
+    const read = sql`(${statusRead} OR coalesce(${latestPercentage} >= 100, false))`;
+    return { read, inProgress: sql`(NOT ${read} AND ${latestPercentage} IS NOT NULL)` };
   }
 
   private readStatusClause(statuses: ReadStatusFilter[], read: SQL, inProgress: SQL): SQL {

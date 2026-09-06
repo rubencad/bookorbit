@@ -10,6 +10,14 @@ import { humanizeBytes, komgaMediaFor, komgaMediaType, komgaReadProgressFor, typ
 export const KOMGA_OPDS_BASE = '/komga/opds/v1.2';
 export const KOMGA_OPDS_SEARCH_TEMPLATE = `${KOMGA_OPDS_BASE}/series?search={searchTerms}`;
 
+function latestDate(first: Date, ...others: Array<Date | null>): Date {
+  let latest = first;
+  for (const candidate of others) {
+    if (candidate && candidate > latest) latest = candidate;
+  }
+  return latest;
+}
+
 // Panels enables Komga REST integration only when the OPDS author is named Komga.
 // Keep the author URI branded as BookOrbit.
 const FEED_AUTHOR = ['<author>', `  ${xmlEl('name', 'Komga')}`, `  ${xmlEl('uri', 'https://bookorbit.app')}`, '</author>'].join('\n');
@@ -130,8 +138,9 @@ export function komgaOpdsBookEntry(book: KomgaBookRecord, prependSeries = false)
     ? `${extension} - ${humanizeBytes(book.file.sizeBytes ?? 0)}\n\n${summary}`
     : `${extension} - ${humanizeBytes(book.file.sizeBytes ?? 0)}`;
   const progress = komgaReadProgressFor(book);
-  // Progress rides on the entry version so caching clients refetch the lastRead attribute.
-  const updated = progress && progress.readAt > book.updatedAt ? progress.readAt : book.updatedAt;
+  // Bump the entry timestamp when reading state changes so cached clients refresh pse:lastRead.
+  const { progressUpdatedAt, statusUpdatedAt, resetAt } = book.readState;
+  const updated = latestDate(book.updatedAt, progressUpdatedAt, statusUpdatedAt, resetAt);
 
   const lines = [
     '  <entry>',

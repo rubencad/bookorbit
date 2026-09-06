@@ -2144,9 +2144,13 @@ export class BookService {
     await this.bookRepo.clearFileProgress(userId, fileId);
   }
 
-  async clearBookProgressForReread(userId: number, bookId: number, user: RequestUser): Promise<void> {
+  async clearBookProgress(userId: number, bookId: number, user: RequestUser): Promise<void> {
     await this.verifyBookAccess(bookId, user);
     await this.bookRepo.clearBookProgress(userId, bookId);
+  }
+
+  async clearBookProgressForReread(userId: number, bookId: number, user: RequestUser): Promise<void> {
+    await this.clearBookProgress(userId, bookId, user);
   }
 
   async setReadStatus(bookId: number, dto: SetStatusDto, user: RequestUser): Promise<UserBookStatus> {

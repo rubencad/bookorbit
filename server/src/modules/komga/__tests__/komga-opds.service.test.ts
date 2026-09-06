@@ -65,6 +65,7 @@ const BOOK: KomgaBookRecord = {
     percentage: null,
     lastReadAt: null,
     progressUpdatedAt: null,
+    resetAt: null,
   },
 };
 

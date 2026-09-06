@@ -40,6 +40,7 @@ function readState(overrides: Partial<KomgaBookReadState> = {}): KomgaBookReadSt
     percentage: null,
     lastReadAt: null,
     progressUpdatedAt: null,
+    resetAt: null,
     ...overrides,
   };
 }
