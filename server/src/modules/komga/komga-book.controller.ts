@@ -54,6 +54,16 @@ export class KomgaBookController {
     return this.bookService.get(user, account, this.parseBookId(bookIdParam));
   }
 
+  @Get(':bookId/next')
+  next(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Param('bookId') bookIdParam: string) {
+    return this.bookService.getSibling(user, account, this.parseBookId(bookIdParam), 'next');
+  }
+
+  @Get(':bookId/previous')
+  previous(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Param('bookId') bookIdParam: string) {
+    return this.bookService.getSibling(user, account, this.parseBookId(bookIdParam), 'previous');
+  }
+
   @Get(':bookId/pages')
   async pages(@CurrentUser() user: RequestUser, @KomgaAccount() account: KomgaRequestAccount, @Param('bookId') bookIdParam: string) {
     const pages = await this.bookService.listPages(user, account, this.parseBookId(bookIdParam));

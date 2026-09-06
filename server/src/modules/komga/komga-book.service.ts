@@ -152,6 +152,22 @@ export class KomgaBookService {
     return toKomgaBookDto(await this.getRecord(user, account, bookId));
   }
 
+  async getSibling(user: RequestUser, account: KomgaRequestAccount, bookId: number, direction: 'next' | 'previous'): Promise<KomgaBookDto> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    const record = await this.requireRecord(scope, bookId);
+    const neighbours = await this.repository.findSeriesNeighbours(scope, record.series.key, bookId);
+    const siblingId = direction === 'next' ? neighbours.nextId : neighbours.previousId;
+    if (siblingId === null) throw new NotFoundException(`No ${direction} book in the series`);
+    const [sibling] = await this.buildRecords(scope, [siblingId], record.series.key);
+    if (!sibling) throw new NotFoundException(`No ${direction} book in the series`);
+    return toKomgaBookDto(sibling);
+  }
+
+  async getRecord(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<KomgaBookRecord> {
+    const scope = await this.libraryService.resolveScope(user, account);
+    return this.requireRecord(scope, bookId);
+  }
+
   async listPages(user: RequestUser, account: KomgaRequestAccount, bookId: number): Promise<ComicPageEntry[]> {
     const scope = await this.libraryService.resolveScope(user, account);
     const { file } = await this.resolveFile(scope, bookId);

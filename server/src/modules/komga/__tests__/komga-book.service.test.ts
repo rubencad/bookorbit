@@ -78,6 +78,7 @@ function makeService(hydrated: KomgaBookHydration, numbering = new Map()) {
     findVisibleBookId: vi.fn().mockResolvedValue(10),
     listBooks: vi.fn().mockResolvedValue({ bookIds: [10], total: 1 }),
     listOnDeck: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
+    findSeriesNeighbours: vi.fn().mockResolvedValue({ previousId: null, nextId: null }),
   };
   const libraryService = { resolveScope: vi.fn().mockResolvedValue(SCOPE) };
   const comicPageService = {
@@ -340,6 +341,33 @@ describe('KomgaBookService', () => {
 
       await service.search(USER, ACCOUNT, parseKomgaBookSearch({ condition: { libraryId: { operator: 'is', value: '7' } } }), {});
       expect(repository.listBooks).toHaveBeenLastCalledWith(expect.objectContaining({ libraryIds: [] }), expect.anything(), expect.anything());
+    });
+
+    it('returns adjacent books in the primary series and rejects missing neighbours', async () => {
+      const memberships = new Map([
+        [10, [{ bookId: 10, seriesId: 8, seriesName: 'Primary', seriesIndex: '1', displayOrder: 0 }]],
+        [11, [{ bookId: 11, seriesId: 8, seriesName: 'Primary', seriesIndex: '2', displayOrder: 0 }]],
+      ]);
+      const { service, repository } = makeService(
+        hydration({
+          books: [row({ id: 10 }), row({ id: 11, title: 'Beta' })],
+          files: new Map([
+            [10, [file({ id: 100 })]],
+            [11, [file({ id: 101 })]],
+          ]),
+          memberships,
+        }),
+      );
+      repository.findSeriesNeighbours.mockResolvedValue({ previousId: null, nextId: 11 });
+
+      const next = await service.getSibling(USER, ACCOUNT, 10, 'next');
+      expect(repository.findSeriesNeighbours).toHaveBeenCalledWith(SCOPE, { kind: 'series', libraryId: 2, seriesId: 8 }, 10);
+      expect(repository.hydrateBooks).toHaveBeenLastCalledWith([11], SCOPE.userId);
+      expect(next).toMatchObject({ id: '11', name: 'Beta', seriesId: '2-s8', metadata: expect.objectContaining({ numberSort: 2 }) });
+
+      await expect(service.getSibling(USER, ACCOUNT, 10, 'previous')).rejects.toThrow(NotFoundException);
+      repository.findVisibleBookId.mockResolvedValue(null);
+      await expect(service.getSibling(USER, ACCOUNT, 10, 'next')).rejects.toThrow(NotFoundException);
     });
 
     it('resolves the download file and its filename', async () => {

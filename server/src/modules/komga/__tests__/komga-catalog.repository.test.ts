@@ -150,6 +150,32 @@ describe('KomgaCatalogRepository', () => {
     expect(empty.db.execute).not.toHaveBeenCalled();
   });
 
+  it('reads the neighbours of a book from the ordered series window and skips one-shots', async () => {
+    const { repository, db } = makeRepository([{ rows: [{ previous_id: 4, next_id: null }] }]);
+    await expect(repository.findSeriesNeighbours(SCOPE, { kind: 'series', libraryId: 2, seriesId: 9 }, 5)).resolves.toEqual({
+      previousId: 4,
+      nextId: null,
+    });
+    expect(db.execute).toHaveBeenCalledTimes(1);
+
+    const missing = makeRepository([{ rows: [] }]);
+    await expect(missing.repository.findSeriesNeighbours(SCOPE, { kind: 'unknown', libraryId: 2 }, 5)).resolves.toEqual({
+      previousId: null,
+      nextId: null,
+    });
+
+    const skipped = makeRepository();
+    await expect(skipped.repository.findSeriesNeighbours(SCOPE, { kind: 'oneshot', libraryId: 2, bookId: 5 }, 5)).resolves.toEqual({
+      previousId: null,
+      nextId: null,
+    });
+    await expect(skipped.repository.findSeriesNeighbours(SCOPE, { kind: 'series', libraryId: 7, seriesId: 9 }, 5)).resolves.toEqual({
+      previousId: null,
+      nextId: null,
+    });
+    expect(skipped.db.execute).not.toHaveBeenCalled();
+  });
+
   it('returns no series when every requested read status is unknown', async () => {
     const { repository, db } = makeRepository();
     await expect(repository.listSeries(SCOPE, { readStatuses: ['SKIMMED'] }, PAGE)).resolves.toEqual({ rows: [], total: 0 });

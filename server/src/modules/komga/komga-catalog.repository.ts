@@ -81,6 +81,11 @@ export interface KomgaBookFilters {
   condition?: KomgaBookCondition | null;
 }
 
+export interface KomgaSeriesNeighbours {
+  previousId: number | null;
+  nextId: number | null;
+}
+
 export interface KomgaReferentialWindow {
   search?: string;
   limit: number;
@@ -421,6 +426,23 @@ export class KomgaCatalogRepository {
 
     const [idRows, countRows] = await Promise.all([idQuery, countQuery]);
     return { bookIds: idRows.map((row) => row.id), total: Number(countRows[0]?.total ?? 0) };
+  }
+
+  async findSeriesNeighbours(scope: KomgaScope, key: KomgaSeriesKey, bookId: number): Promise<KomgaSeriesNeighbours> {
+    const none: KomgaSeriesNeighbours = { previousId: null, nextId: null };
+    if (!scope.libraryIds.includes(key.libraryId) || key.kind === 'oneshot') return none;
+    const { where, orderBy } = this.seriesBooksQuery(scope, key, {}, undefined);
+    const order = joinSql(orderBy, sql`, `);
+    const membership = key.kind === 'series' ? sql`INNER JOIN ${bookSeriesMemberships} ON ${this.membershipJoin(key.seriesId)}` : sql``;
+    const result = await this.db.execute<{ previous_id: number | null; next_id: number | null }>(
+      sql`SELECT ordered.previous_id, ordered.next_id FROM (
+        SELECT ${books.id} AS id, lag(${books.id}) OVER (ORDER BY ${order}) AS previous_id, lead(${books.id}) OVER (ORDER BY ${order}) AS next_id
+        FROM ${books} ${membership} LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
+        WHERE ${where}
+      ) AS ordered WHERE ordered.id = ${bookId}`,
+    );
+    const row = result.rows[0];
+    return row ? { previousId: row.previous_id, nextId: row.next_id } : none;
   }
 
   async listBooks(scope: KomgaScope, filters: KomgaBookFilters, page: KomgaPageRequest): Promise<{ bookIds: number[]; total: number }> {
