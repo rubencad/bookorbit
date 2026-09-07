@@ -156,6 +156,30 @@ describe('parseKomgaBookSearch', () => {
     });
   });
 
+  it('ignores the kotlinx class discriminator that Komelia sends next to each condition', () => {
+    const parsed = parseKomgaBookSearch(
+      {
+        condition: {
+          type: 'AllOfBook',
+          allOf: [
+            { type: 'ReleaseDate', releaseDate: { operator: 'isInTheLast', duration: 'PT720H' } },
+            { type: 'ReadStatus', readStatus: { operator: 'is', value: 'IN_PROGRESS' } },
+          ],
+        },
+      },
+      NOW,
+    );
+    expect(parsed.condition).toEqual({
+      kind: 'allOf',
+      conditions: [
+        { kind: 'releaseDate', match: { operator: 'onOrAfter', date: '2026-02-13' } },
+        { kind: 'readStatus', match: { operator: 'is', value: 'IN_PROGRESS' } },
+      ],
+    });
+    expect(parseKomgaBookSearch({ condition: { type: 'AllOfBook', allOf: [] } }).condition).toEqual({ kind: 'allOf', conditions: [] });
+    expect(() => parseKomgaBookSearch({ condition: { type: 'AllOfBook' } })).toThrow(/expected exactly one condition, got 0/);
+  });
+
   it('answers 400 for Komga leaves this server does not support and for series-only leaves', () => {
     expect(() => parseKomgaBookSearch({ condition: { numberSort: { operator: 'is', value: 1 } } })).toThrow(
       /Unsupported search condition: numberSort/,

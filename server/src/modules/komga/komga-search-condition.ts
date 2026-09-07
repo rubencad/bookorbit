@@ -72,6 +72,9 @@ const MAX_DEPTH = 10;
 const MAX_LEAVES = 200;
 const MAX_BRANCH = 100;
 
+// Komelia's kotlinx.serialization client emits a "type" class discriminator next to the condition key; Komga's Jackson deduction ignores unknown fields.
+const CLASS_DISCRIMINATOR = 'type';
+
 const searchBodySchema = z.object({
   condition: z.unknown().optional().nullable(),
   fullTextSearch: z.string().max(500).optional().nullable(),
@@ -197,7 +200,7 @@ class ConditionParser<L extends { kind: string }> {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
       throw new BadRequestException(`Invalid search condition at ${path}: expected an object with one condition`);
     }
-    const keys = Object.keys(raw);
+    const keys = Object.keys(raw).filter((key) => key !== CLASS_DISCRIMINATOR);
     if (keys.length !== 1) throw new BadRequestException(`Invalid search condition at ${path}: expected exactly one condition, got ${keys.length}`);
     const [key] = keys;
     const value = (raw as Record<string, unknown>)[key];
