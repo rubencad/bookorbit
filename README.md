@@ -100,6 +100,8 @@ After configuring OIDC and linking at least one active administrator, you can se
 
 For the full installation guide including reverse proxy setup, file permissions on NAS, external databases, and environment variable reference, see **[bookorbit.app/installation](https://bookorbit.app/installation)**.
 
+For local builds pushed to Docker Hub for NAS testing, see [Docker test images](docs/DOCKER_TEST_IMAGES.md).
+
 ## KOReader Plugin
 
 The BookOrbit plugin for KOReader adds progress sync, two-way annotation sync, and a native catalog browser: navigate, search, and download books from your library without leaving the device.
