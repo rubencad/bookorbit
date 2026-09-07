@@ -29,6 +29,10 @@ deactivates the user, every account of that user is refused.
 Passwords are stored hashed and cannot be shown again. Lose one, delete the account, create a new
 one.
 
+Most clients send the username and password with every request. Komelia signs in once instead and
+asks for a remember-me cookie, as it does with Komga: the cookie is valid for a year, is tied to the
+account, and stops working the moment the account is deleted. Signing out in Komelia discards it.
+
 Each account has two options:
 
 | Option                           | Default | Effect                                                                                                                                                            |
@@ -89,8 +93,10 @@ API toggle.
 server with the address from the settings page and the account username and password. The
 extension lists your libraries as filters and each series as an entry.
 
-**Komelia**: sign in with the server address and account. Komelia hides its management screens
-because the account carries no admin role; browsing, reading and downloads work.
+**Komelia**: sign in with the server address and account. Enter the address exactly as shown, with
+no trailing slash: Komelia only keeps its sign-in cookie when the address path matches the cookie.
+Komelia hides its management screens because the account carries no admin role; browsing, reading
+and downloads work.
 
 **Paperback**: add the Komga source and enter the same address and credentials.
 
@@ -200,6 +206,9 @@ a series, and a one-shot, answer 404.
   account and update the client.
 - **403 Komga API is disabled**: an administrator has to enable the API in Settings > Devices > Komga.
 - **403 Komga access revoked**: the user lost `komga_access` or was deactivated.
+- **Komelia asks you to sign in again**: the address in Komelia ends with a slash, so Komelia
+  dropped the sign-in cookie; remove the slash and sign in again. Otherwise the cookie is older than
+  a year or the account was deleted.
 - **A series is missing**: the user has no access to that library, a content filter hides its books,
   or the comics are in a format BookOrbit does not treat as comics (CBZ, CBR, CB7).
 - **A book shows 0 pages**: the archive has not been counted yet. Opening it once, or the next

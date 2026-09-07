@@ -250,6 +250,7 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
         const response = await komgaGet('/komga/api/v2/users/me', grouped);
         expect(response.statusCode).toBe(403);
         expect(response.json()).toMatchObject({ message: 'Komga API is disabled' });
+        expect((await ctx.app.inject({ method: 'POST', url: '/komga/api/logout' })).statusCode).toBe(403);
 
         const status = await ctx.app.inject({ method: 'GET', url: '/api/v1/komga-api/status', headers: authHeader(owner.accessToken) });
         expect(status.statusCode).toBe(200);
@@ -265,6 +266,68 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       expect(response.statusCode).toBe(404);
       expect(response.headers['content-type']).toContain('application/json');
       expect(response.json()).toMatchObject({ status: 404, error: 'Not Found', path: '/komga/api/v1/tasks' });
+    });
+  });
+
+  describe('remember-me cookie', () => {
+    it('issues a cookie on request and accepts it in place of credentials', async () => {
+      const login = await komgaGet('/komga/api/v2/users/me?remember-me=true', grouped);
+      expect(login.statusCode).toBe(200);
+      const cookie = login.cookies.find((candidate) => candidate.name === 'komga-remember-me');
+      expect(cookie).toMatchObject({ path: '/komga', httpOnly: true, maxAge: 365 * 24 * 60 * 60 });
+      expect(cookie!.value).toMatch(/^\d+\.\d+\.[A-Za-z0-9_-]{43}$/);
+
+      const plain = await komgaGet('/komga/api/v2/users/me', grouped);
+      expect(plain.statusCode).toBe(200);
+      expect(plain.headers['set-cookie']).toBeUndefined();
+
+      const me = await komgaCookieGet('/komga/api/v2/users/me', cookie!.value);
+      expect(me.statusCode).toBe(200);
+      expect(me.json()).toEqual(login.json());
+      expect(me.headers['set-cookie']).toBeUndefined();
+
+      const libraries = await komgaCookieGet('/komga/api/v1/libraries', cookie!.value);
+      expect(libraries.statusCode).toBe(200);
+      expect((libraries.json() as Array<{ id: string }>).map((library) => library.id)).toEqual([String(comicLibrary.libraryId)]);
+    });
+
+    it('returns 401 with a Basic challenge and clears a forged cookie', async () => {
+      for (const token of [`1.9999999999.${'a'.repeat(43)}`, `2147483648.9999999999.${'a'.repeat(43)}`]) {
+        const response = await komgaCookieGet('/komga/api/v1/libraries', token);
+        expect(response.statusCode).toBe(401);
+        expect(response.headers['www-authenticate']).toBe('Basic realm="bookorbit Komga"');
+        expect(response.cookies.find((candidate) => candidate.name === 'komga-remember-me')).toMatchObject({ value: '', path: '/komga', maxAge: 0 });
+      }
+    });
+
+    it('rejects the cookie after account deletion', async () => {
+      const username = `komelia-${randomUUID().slice(0, 8)}`;
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/komga-users',
+        headers: authHeader(owner.accessToken),
+        payload: { username, password: 'KomeliaPassword123' },
+      });
+      expect(created.statusCode).toBe(201);
+
+      const login = await komgaGet('/komga/api/v2/users/me?remember-me=true', { username, password: 'KomeliaPassword123' });
+      expect(login.statusCode).toBe(200);
+      const token = login.cookies.find((candidate) => candidate.name === 'komga-remember-me')!.value;
+      expect((await komgaCookieGet('/komga/api/v1/libraries', token)).statusCode).toBe(200);
+
+      const deleted = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/komga-users/${created.json().id}`,
+        headers: authHeader(owner.accessToken),
+      });
+      expect(deleted.statusCode).toBe(204);
+      expect((await komgaCookieGet('/komga/api/v1/libraries', token)).statusCode).toBe(401);
+    });
+
+    it('clears the cookie on logout without requiring credentials', async () => {
+      const response = await ctx.app.inject({ method: 'POST', url: '/komga/api/logout' });
+      expect(response.statusCode).toBe(204);
+      expect(response.cookies.find((candidate) => candidate.name === 'komga-remember-me')).toMatchObject({ value: '', path: '/komga', maxAge: 0 });
     });
   });
 
@@ -1451,6 +1514,10 @@ describe('Komga API (e2e)', { timeout: 180_000 }, () => {
       url,
       headers: credentials ? { authorization: basicAuth(credentials.username, credentials.password) } : {},
     });
+  }
+
+  async function komgaCookieGet(url: string, token: string) {
+    return ctx.app.inject({ method: 'GET', url, headers: { cookie: `komga-remember-me=${token}` } });
   }
 
   async function komgaSend(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, credentials: Credentials, payload?: Record<string, unknown>) {

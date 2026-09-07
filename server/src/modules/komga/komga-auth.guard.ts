@@ -6,6 +6,7 @@ import { BasicCredentialCache } from '../../common/auth/basic-credential-cache';
 import { PermissionService } from '../../common/services/permission.service';
 import type * as schema from '../../db/schema';
 import { UserService } from '../user/user.service';
+import { KomgaRememberMeService } from './komga-remember-me.service';
 import { KomgaUserService } from './komga-user.service';
 import { KOMGA_BASIC_REALM } from './komga.constants';
 
@@ -21,6 +22,11 @@ export interface KomgaRequestAccount {
   includeNonComicBooks: boolean;
 }
 
+interface AuthenticatedAccount {
+  account: KomgaUserRow;
+  viaBasic: boolean;
+}
+
 @Injectable()
 export class KomgaAuthGuard implements CanActivate {
   private readonly logger = new Logger(KomgaAuthGuard.name);
@@ -30,34 +36,14 @@ export class KomgaAuthGuard implements CanActivate {
     private readonly userService: UserService,
     private readonly permissionService: PermissionService,
     private readonly credentialCache: BasicCredentialCache,
+    private readonly rememberMe: KomgaRememberMeService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<FastifyRequest>();
     const reply = context.switchToHttp().getResponse<FastifyReply>();
 
-    const authHeader = request.headers.authorization;
-    if (!authHeader?.startsWith('Basic ')) {
-      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
-      throw new UnauthorizedException('Basic authentication required');
-    }
-
-    const decoded = Buffer.from(authHeader.slice(6), 'base64').toString();
-    const colonIndex = decoded.indexOf(':');
-    if (colonIndex === -1) {
-      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const username = decoded.slice(0, colonIndex);
-    const password = decoded.slice(colonIndex + 1);
-
-    const account = await this.resolveAccount(username, password);
-    if (!account) {
-      this.logger.warn(`[${AUTH_EVENT}] [fail] reason=invalid_credentials ip=${request.ip} - Komga Basic authentication rejected`);
-      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
-      throw new UnauthorizedException('Invalid credentials');
-    }
+    const { account, viaBasic } = await this.authenticate(request, reply);
 
     const fullUser = await this.userService.findByIdWithPermissions(account.userId);
     if (!fullUser) {
@@ -68,6 +54,10 @@ export class KomgaAuthGuard implements CanActivate {
     }
     if (!this.permissionService.userHas(fullUser, Permission.KomgaAccess)) {
       throw new ForbiddenException('Komga access revoked');
+    }
+
+    if (viaBasic && this.rememberMe.isRequested(request)) {
+      this.rememberMe.issue(reply, account);
     }
 
     const target = request as unknown as Record<string, unknown>;
@@ -81,6 +71,43 @@ export class KomgaAuthGuard implements CanActivate {
     } satisfies KomgaRequestAccount;
 
     return true;
+  }
+
+  private async authenticate(request: FastifyRequest, reply: FastifyReply): Promise<AuthenticatedAccount> {
+    const authHeader = request.headers.authorization;
+    if (authHeader?.startsWith('Basic ')) {
+      return { account: await this.authenticateBasic(authHeader.slice(6), request, reply), viaBasic: true };
+    }
+
+    const remembered = await this.rememberMe.resolve(request);
+    if (remembered.status === 'valid') {
+      return { account: remembered.account, viaBasic: false };
+    }
+
+    reply.header('WWW-Authenticate', BASIC_CHALLENGE);
+    if (remembered.status === 'invalid') {
+      this.logger.warn(`[${AUTH_EVENT}] [fail] reason=invalid_remember_me ip=${request.ip} - Komga remember-me cookie rejected`);
+      this.rememberMe.clear(reply);
+      throw new UnauthorizedException('Invalid remember-me cookie');
+    }
+    throw new UnauthorizedException('Basic authentication required');
+  }
+
+  private async authenticateBasic(encoded: string, request: FastifyRequest, reply: FastifyReply): Promise<KomgaUserRow> {
+    const decoded = Buffer.from(encoded, 'base64').toString();
+    const colonIndex = decoded.indexOf(':');
+    if (colonIndex === -1) {
+      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const account = await this.resolveAccount(decoded.slice(0, colonIndex), decoded.slice(colonIndex + 1));
+    if (!account) {
+      this.logger.warn(`[${AUTH_EVENT}] [fail] reason=invalid_credentials ip=${request.ip} - Komga Basic authentication rejected`);
+      reply.header('WWW-Authenticate', BASIC_CHALLENGE);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    return account;
   }
 
   private async resolveAccount(username: string, password: string): Promise<KomgaUserRow | null> {

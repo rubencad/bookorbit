@@ -15,3 +15,9 @@ export const KOMGA_MEDIA_PROFILES = ['DIVINA', 'PDF', 'EPUB'] as const;
 export type KomgaMediaProfile = (typeof KOMGA_MEDIA_PROFILES)[number];
 export const KOMGA_SERIES_STATUSES = ['ENDED', 'ONGOING', 'ABANDONED', 'HIATUS'] as const;
 export type KomgaSeriesStatus = (typeof KOMGA_SERIES_STATUSES)[number];
+export const KOMGA_REMEMBER_ME_PARAM = 'remember-me';
+// Komelia saves this cookie only if its name is 'komga-remember-me'
+// and its Path exactly matches the configured server URL's path.
+export const KOMGA_REMEMBER_ME_COOKIE = 'komga-remember-me';
+export const KOMGA_REMEMBER_ME_COOKIE_PATH = '/komga';
+export const KOMGA_REMEMBER_ME_VALIDITY_SECONDS = 365 * 24 * 60 * 60;

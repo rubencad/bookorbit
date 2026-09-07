@@ -16,6 +16,7 @@ import { KomgaFallbackController } from '../komga-fallback.controller';
 import { KomgaLibraryController } from '../komga-library.controller';
 import { KomgaLibraryService } from '../komga-library.service';
 import { KomgaListController } from '../komga-list.controller';
+import { KomgaLogoutController } from '../komga-logout.controller';
 import { KomgaMeController } from '../komga-me.controller';
 import { KomgaOpdsController } from '../komga-opds.controller';
 import { KomgaOpdsService } from '../komga-opds.service';
@@ -23,6 +24,7 @@ import { KomgaReadProgressController } from '../komga-read-progress.controller';
 import { KomgaReadProgressService } from '../komga-read-progress.service';
 import { KomgaReferentialController } from '../komga-referential.controller';
 import { KomgaReferentialService } from '../komga-referential.service';
+import { KomgaRememberMeService } from '../komga-remember-me.service';
 import { KomgaSeriesController } from '../komga-series.controller';
 import { KomgaSeriesService } from '../komga-series.service';
 import { KomgaStatusController } from '../komga-status.controller';
@@ -45,6 +47,7 @@ describe('KomgaModule', () => {
       KomgaUserController,
       KomgaStatusController,
       KomgaMeController,
+      KomgaLogoutController,
       KomgaLibraryController,
       KomgaSeriesController,
       KomgaBookController,
@@ -57,6 +60,7 @@ describe('KomgaModule', () => {
     expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, KomgaModule)).toEqual([
       KomgaUserRepository,
       KomgaUserService,
+      KomgaRememberMeService,
       KomgaAuthGuard,
       KomgaEnabledGuard,
       KomgaCatalogRepository,
